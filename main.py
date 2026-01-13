@@ -1299,14 +1299,15 @@ class RAGEngine:
         if not reranked:
             return []
         
-        # If no rerank scores (reranker=None), skip filtering - just return all
+        # If no rerank scores (reranker=None), skip filtering entirely
         if "_rerank_score" not in reranked[0]:
-            logger.info("No rerank scores found - skipping score-based filtering")
-            return reranked  # Return ALL candidates since we can't filter by score
+            logger.info(f"No rerank scores found - returning all {len(reranked)} candidates without filtering")
+            return reranked  # RETURN IMMEDIATELY - don't try to access _rerank_score
             
+        # Only reach here if we have rerank scores
         top_score = reranked[0]["_rerank_score"]
         floor = top_score - self.cfg.source_score_drop
-        good = [c for c in reranked if c["_rerank_score"] >= floor]
+        good = [c for c in reranked if c.get("_rerank_score", 0) >= floor]
         logger.info(f"Score filtering: top={top_score:.2f}, floor={floor:.2f}, kept {len(good)}/{len(reranked)}")
         return good
 
