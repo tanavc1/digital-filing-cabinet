@@ -453,10 +453,15 @@ async def ingest_image(
         logger.info(f"Analyzing image with Gemini Vision: {filename}")
         
         # Analyze with vision
-        result = await asyncio.to_thread(analyze_image, raw)
+        try:
+            result = await asyncio.to_thread(analyze_image, raw)
+        except RuntimeError as e:
+            if "GEMINI_API_KEY" in str(e):
+                raise HTTPException(status_code=500, detail="Server Configuration Error: GEMINI_API_KEY is not set in .env")
+            raise e
         
         if result.confidence == 0:
-            raise HTTPException(status_code=500, detail="Vision analysis failed")
+            raise HTTPException(status_code=500, detail=f"Vision analysis failed: {result.description}")
         
         # Create markdown document from vision result
         doc_title = title or filename
