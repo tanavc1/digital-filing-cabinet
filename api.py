@@ -70,7 +70,20 @@ async def startup_validation():
         logger.error(f"Missing required environment variables: {missing}")
         raise RuntimeError(f"Missing required env vars: {missing}")
     
-    logger.info("Environment validated. Server ready (models will load on first request).")
+    logger.info("Environment validated. Server ready.")
+    
+    # Start background pre-warming
+    asyncio.create_task(background_warmup())
+
+async def background_warmup():
+    """Pre-warm the RAG engine in the background."""
+    logger.info("Starting background engine pre-warm...")
+    try:
+        # Run in thread pool to avoid blocking event loop
+        await asyncio.to_thread(get_engine)
+        logger.info("Engine pre-warmed successfully in background.")
+    except Exception as e:
+        logger.warning(f"Background pre-warm failed: {e}")
 
 
 _ENGINE: Optional[RAGEngine] = None
