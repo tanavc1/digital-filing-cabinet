@@ -288,6 +288,7 @@ async def ingest_any(
     source: str = "local",
     title: Optional[str] = None,
     enable_ocr: bool = False,
+    enable_vision: bool = False,
     file: UploadFile = File(...),
 ) -> IngestResponse:
     """
@@ -295,6 +296,7 @@ async def ingest_any(
     - Accepts: PDF, DOCX, PPTX, XLSX, HTML, MD, TXT, etc.
     - Uses Docling to convert -> Markdown text -> your existing ingestion pipeline.
     - OCR optional: enable_ocr=true (requires OCR deps installed).
+    - Vision optional: enable_vision=true (uses Gemini to analyze images in PDFs).
     """
     engine = get_engine()
 
@@ -346,7 +348,7 @@ async def ingest_any(
             import asyncio
             
             logger = logging.getLogger("uvicorn.error")
-            logger.info(f"Extracting PDF with Hybrid Extractor: {filename} (OCR={enable_ocr})")
+            logger.info(f"Extracting PDF with Hybrid Extractor: {filename} (OCR={enable_ocr}, Vision={enable_vision})")
             
             try:
                 # Run heavyweight OCR/extraction in thread
@@ -354,11 +356,12 @@ async def ingest_any(
                     pdf_extractor.extract_pdf,
                     tmp_bin,
                     title=title or filename,
-                    enable_ocr=enable_ocr
+                    enable_ocr=enable_ocr,
+                    enable_vision=enable_vision
                 )
                 
                 extracted_text = result.text
-                logger.info(f"PDF extraction success. {result.page_count} pages, {result.pages_with_ocr} scanned, {result.tables_found} tables.")
+                logger.info(f"PDF extraction success. {result.page_count} pages, {result.pages_with_ocr} scanned, {result.tables_found} tables, {result.images_analyzed} images.")
                 
             except Exception as e:
                 import traceback
@@ -416,6 +419,78 @@ async def ingest_any(
                     os.remove(p)
             except Exception:
                 pass
+
+
+@app.post("/ingest/image", response_model=IngestResponse)
+async def ingest_image(
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+    source: str = "local",
+    title: Optional[str] = None,
+    file: UploadFile = File(...),
+) -> IngestResponse:
+    """
+    Direct image ingestion endpoint.
+    - Accepts: PNG, JPG, GIF, WebP, etc.
+    - Uses Gemini Vision to analyze the image content.
+    - Creates a searchable text document from the analysis.
+    """
+    import logging
+    from vision_analyzer import analyze_image, analyze_document_image
+    
+    logger = logging.getLogger("uvicorn.error")
+    engine = get_engine()
+    
+    try:
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="Empty file upload.")
+        
+        filename = file.filename or "image"
+        
+        # Validate it's an image
+        kind = filetype.guess(raw)
+        if not kind or not kind.mime.startswith("image/"):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File must be an image. Got: {kind.mime if kind else 'unknown'}"
+            )
+        
+        logger.info(f"Analyzing image with Gemini Vision: {filename}")
+        
+        # Analyze with vision
+        result = await asyncio.to_thread(analyze_image, raw)
+        
+        if result.confidence == 0:
+            raise HTTPException(status_code=500, detail="Vision analysis failed")
+        
+        # Create markdown document from vision result
+        doc_title = title or filename
+        markdown_text = f"""# {doc_title}
+
+**Image Type:** {result.image_type}
+
+## Analysis
+
+{result.description}
+"""
+        
+        logger.info(f"Vision analysis complete. Type: {result.image_type}, Content length: {len(result.description)}")
+        
+        # Ingest into RAG
+        doc_id = engine.ingest_text(
+            text=markdown_text,
+            title=doc_title,
+            source=source,
+            workspace_id=workspace_id
+        )
+        
+        return IngestResponse(status="ok", doc_id=doc_id)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Image ingestion failed: {e}")
 
 
 @app.post("/ingest/any/stream")

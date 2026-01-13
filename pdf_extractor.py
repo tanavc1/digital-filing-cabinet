@@ -38,6 +38,11 @@ class PageContent:
     text: str
     tables: List[str]
     used_ocr: bool
+    image_descriptions: List[str] = None  # Vision analysis results
+    
+    def __post_init__(self):
+        if self.image_descriptions is None:
+            self.image_descriptions = []
     
 
 @dataclass
@@ -47,6 +52,7 @@ class PDFExtractionResult:
     page_count: int
     pages_with_ocr: int
     tables_found: int
+    images_analyzed: int  # New: count of vision-analyzed images
     title: str
 
 
@@ -201,7 +207,94 @@ def extract_tables(page: fitz.Page) -> List[str]:
     return tables
 
 
-def extract_page(page: fitz.Page, page_num: int, enable_ocr: bool = True) -> PageContent:
+def extract_and_analyze_images(
+    page: fitz.Page, 
+    page_num: int,
+    enable_vision: bool = True,
+    max_images: int = 5
+) -> List[str]:
+    """
+    Extract images from page and analyze with Gemini Vision.
+    
+    Args:
+        page: PyMuPDF page object
+        page_num: 1-indexed page number
+        enable_vision: Whether to use Gemini Vision
+        max_images: Maximum images to analyze per page
+        
+    Returns:
+        List of Markdown-formatted image descriptions
+    """
+    if not enable_vision:
+        return []
+    
+    descriptions = []
+    image_list = page.get_images(full=True)
+    
+    if not image_list:
+        return []
+    
+    # Only import vision_analyzer when needed (lazy import)
+    try:
+        from vision_analyzer import (
+            analyze_image, 
+            should_analyze_image, 
+            format_vision_result_as_markdown
+        )
+    except ImportError:
+        logger.warning("vision_analyzer not available, skipping image analysis")
+        return []
+    
+    analyzed_count = 0
+    for img_info in image_list:
+        if analyzed_count >= max_images:
+            break
+            
+        try:
+            xref = img_info[0]
+            
+            # Extract image bytes
+            base_image = page.parent.extract_image(xref)
+            if not base_image:
+                continue
+                
+            image_bytes = base_image["image"]
+            width = base_image.get("width", 0)
+            height = base_image.get("height", 0)
+            
+            # Check if worth analyzing
+            if not should_analyze_image(image_bytes, width, height):
+                continue
+            
+            logger.info(f"Page {page_num}: Analyzing image {analyzed_count + 1} ({width}x{height})")
+            
+            # Analyze with Gemini Vision
+            result = analyze_image(image_bytes)
+            
+            if result.confidence > 0:
+                description = format_vision_result_as_markdown(
+                    result, 
+                    image_index=analyzed_count + 1
+                )
+                descriptions.append(description)
+                analyzed_count += 1
+                
+        except Exception as e:
+            logger.warning(f"Page {page_num}: Failed to analyze image: {e}")
+            continue
+    
+    if analyzed_count > 0:
+        logger.info(f"Page {page_num}: Analyzed {analyzed_count} images")
+    
+    return descriptions
+
+
+def extract_page(
+    page: fitz.Page, 
+    page_num: int, 
+    enable_ocr: bool = True,
+    enable_vision: bool = False
+) -> PageContent:
     """
     Extract content from a single page using the best available method.
     
@@ -209,15 +302,21 @@ def extract_page(page: fitz.Page, page_num: int, enable_ocr: bool = True) -> Pag
         page: PyMuPDF page object
         page_num: 1-indexed page number
         enable_ocr: Whether to use OCR for scanned pages
+        enable_vision: Whether to use Gemini Vision for image analysis
         
     Returns:
-        PageContent with text, tables, and metadata
+        PageContent with text, tables, images, and metadata
     """
     # First, try native text extraction
     native_text = page.get_text("text")
     
     # Extract tables
     tables = extract_tables(page)
+    
+    # Extract and analyze images if vision enabled
+    image_descriptions = []
+    if enable_vision:
+        image_descriptions = extract_and_analyze_images(page, page_num, enable_vision=True)
     
     # Determine if we need OCR
     used_ocr = False
@@ -237,14 +336,16 @@ def extract_page(page: fitz.Page, page_num: int, enable_ocr: bool = True) -> Pag
         page_num=page_num,
         text=final_text,
         tables=tables,
-        used_ocr=used_ocr
+        used_ocr=used_ocr,
+        image_descriptions=image_descriptions
     )
 
 
 def extract_pdf(
     path: str, 
     title: Optional[str] = None,
-    enable_ocr: bool = True
+    enable_ocr: bool = True,
+    enable_vision: bool = False
 ) -> PDFExtractionResult:
     """
     Extract all content from a PDF file.
@@ -253,12 +354,14 @@ def extract_pdf(
     1. Opens the PDF with PyMuPDF
     2. Extracts text from each page (native or OCR)
     3. Extracts tables and formats as Markdown
-    4. Combines everything into a structured Markdown document
+    4. Optionally analyzes images with Gemini Vision
+    5. Combines everything into a structured Markdown document
     
     Args:
         path: Path to PDF file
         title: Optional title override (otherwise uses filename)
         enable_ocr: Whether to enable OCR for scanned pages
+        enable_vision: Whether to analyze images with Gemini Vision
         
     Returns:
         PDFExtractionResult with complete extracted content
@@ -272,12 +375,13 @@ def extract_pdf(
     all_parts = []
     pages_with_ocr = 0
     total_tables = 0
+    total_images_analyzed = 0
     
-    logger.info(f"Extracting PDF: {pdf_title} ({doc.page_count} pages, OCR={enable_ocr})")
+    logger.info(f"Extracting PDF: {pdf_title} ({doc.page_count} pages, OCR={enable_ocr}, Vision={enable_vision})")
     
     for page_num in range(doc.page_count):
         page = doc.load_page(page_num)
-        content = extract_page(page, page_num + 1, enable_ocr)
+        content = extract_page(page, page_num + 1, enable_ocr, enable_vision)
         
         # Build page section
         page_parts = [f"## Page {content.page_num}"]
@@ -289,6 +393,12 @@ def extract_pdf(
             for i, table in enumerate(content.tables, 1):
                 page_parts.append(f"\n**Table {i}:**\n{table}")
             total_tables += len(content.tables)
+        
+        # Add image descriptions from vision analysis
+        if content.image_descriptions:
+            for img_desc in content.image_descriptions:
+                page_parts.append(img_desc)
+            total_images_analyzed += len(content.image_descriptions)
         
         if content.used_ocr:
             pages_with_ocr += 1
@@ -302,18 +412,21 @@ def extract_pdf(
     header = f"# {pdf_title}\n\n"
     if pages_with_ocr > 0:
         header += f"*OCR was used on {pages_with_ocr} of {doc.page_count} pages*\n\n"
+    if total_images_analyzed > 0:
+        header += f"*{total_images_analyzed} images were analyzed with AI vision*\n\n"
     
     result = PDFExtractionResult(
         text=header + full_text,
         page_count=doc.page_count,
         pages_with_ocr=pages_with_ocr,
         tables_found=total_tables,
+        images_analyzed=total_images_analyzed,
         title=pdf_title
     )
     
     doc.close()
 
-    logger.info(f"Extraction complete: {len(result.text)} chars, {pages_with_ocr} OCR pages, {total_tables} tables")
+    logger.info(f"Extraction complete: {len(result.text)} chars, {pages_with_ocr} OCR pages, {total_tables} tables, {total_images_analyzed} images")
     
     return result
 
