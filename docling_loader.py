@@ -35,30 +35,28 @@ class DoclingExtractor:
     """
 
     def __init__(self, enable_ocr: bool = True):
-        import shutil
         from docling.document_converter import PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import (
             PdfPipelineOptions, 
-            TableStructureOptions
+            TableStructureOptions,
+            EasyOcrOptions,
+            RapidOcrOptions
         )
 
-        # Check if tesseract is actually installed
-        tesseract_available = shutil.which("tesseract") is not None
-        
-        # Only enable OCR if requested AND tesseract is available
-        self.enable_ocr = enable_ocr and tesseract_available
-        
-        if enable_ocr and not tesseract_available:
-            print("WARNING: OCR requested but 'tesseract' binary not found. Falling back to native PDF parsing.")
+        # Always enable OCR if requested, using RapidOCR as the engine (pip installed)
+        self.enable_ocr = enable_ocr
         
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = self.enable_ocr
         pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options.do_cell_matching = True
         
+        # Use RapidOCR (fast, accurate, pure python dependency)
         if self.enable_ocr:
-            pipeline_options.ocr_options.use_gpu = False 
+            pipeline_options.ocr_options = RapidOcrOptions()
+            # If on Mac, we could technically use OcrMacOptions() but RapidOCR is more consistent cross-platform
+            # pipeline_options.ocr_options.use_gpu = False # RapidOCR handles this internally
 
         self.converter = DocumentConverter(
             format_options={
