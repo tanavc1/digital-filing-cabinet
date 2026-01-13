@@ -812,17 +812,18 @@ def rrf_fuse(
 class LocalModels:
     def __init__(self, embed_name: str, rerank_name: str):
         logger.info(f"Loading embed model: {embed_name}")
+        # Use Auto device (MPS on Mac) + Fix for meta tensor error
         self.embedder = SentenceTransformer(
             embed_name, 
-            device="cpu",
-            model_kwargs={"low_cpu_mem_usage": False}  # Fix for Python 3.13/MPS meta tensor issue
+            device=None,
+            model_kwargs={"low_cpu_mem_usage": False}
         )
         try:
             logger.info(f"Loading rerank model: {rerank_name}")
             self.reranker = CrossEncoder(
                 rerank_name, 
-                device="cpu",
-                automodel_args={"low_cpu_mem_usage": False}
+                device=None,
+                model_kwargs={"low_cpu_mem_usage": False}
             )
         except Exception as e:
             logger.error(f"Failed to load Rerank model: {e}")
@@ -1165,6 +1166,7 @@ class RAGEngine:
         title: Optional[str] = None,
         source: str = "local",
         workspace_id: Optional[str] = None,
+        uri: Optional[str] = None,
         progress_callback: Optional[callable] = None,
     ) -> str:
         workspace_id = normalize_workspace_id(workspace_id)
@@ -1224,7 +1226,7 @@ class RAGEngine:
                 "doc_id": doc_id,
                 "workspace_id": workspace_id,
                 "source": source,
-                "uri": os.path.abspath(path),
+                "uri": uri or os.path.abspath(path),
                 "title": title_final,
                 "chunk_index": int(c["chunk_index"]),
                 "start_char": int(c["start_char"]),
@@ -1240,7 +1242,7 @@ class RAGEngine:
             "doc_id": doc_id,
             "workspace_id": workspace_id,
             "source": source,
-            "uri": os.path.abspath(path),
+            "uri": uri or os.path.abspath(path),
             "title": title_final,
             "created_at": now_ts(),
             "modified_at": int(os.path.getmtime(path)),

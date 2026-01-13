@@ -302,24 +302,47 @@ async def ingest_file(
         except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text.")
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+            raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text.")
+        
+        # PERSISTENCE CHANGE: Save to ./data/uploads instead of temp
+        file_id = str(uuid.uuid4())
+        upload_dir = os.path.join(os.getenv("UPLOAD_DIR", "./data/uploads"), workspace_id)
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        safe_name = os.path.basename(file.filename) or "upload.txt"
+        perm_path = os.path.join(upload_dir, f"{file_id}_{safe_name}")
+        
+        with open(perm_path, "w", encoding="utf-8") as f:
             f.write(text)
-            tmp_path = f.name
 
         doc_id = await engine.ingest_text_file(
-            tmp_path,
+            perm_path,
             title=title or file.filename,
             source=source,
-            workspace_id=workspace_id
+            workspace_id=workspace_id,
+            uri=perm_path # Persistent URI
         )
         return IngestResponse(status="ok", doc_id=doc_id)
-    finally:
-        try:
-            if tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
+    except Exception as e:
+        logger.error(f"Ingest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+
+# Helper for persistent saving
+async def save_upload_to_disk(file: UploadFile, workspace_id: str) -> str:
+    """Save upload to persistent storage and return absolute path."""
+    upload_dir = os.path.join(os.getenv("UPLOAD_DIR", "./data/uploads"), workspace_id)
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    file_id = str(uuid.uuid4())
+    filename = os.path.basename(file.filename or "unknown")
+    perm_path = os.path.join(upload_dir, f"{file_id}_{filename}")
+    
+    with open(perm_path, "wb") as f:
+        while content := await file.read(1024 * 1024): # 1MB chunks
+            f.write(content)
+            
+    return perm_path
 
 @app.post("/ingest/any", response_model=IngestResponse)
 async def ingest_any(
@@ -339,126 +362,86 @@ async def ingest_any(
     """
     engine = get_engine()
 
-    tmp_bin = None
-    tmp_txt = None
-
     try:
-        raw = await file.read()
-        if not raw:
-            raise HTTPException(status_code=400, detail="Empty file upload.")
-
-        # MIME sniff (best-effort)
-        kind = filetype.guess(raw)
-        guessed_mime = kind.mime if kind else (file.content_type or None)
-
+        # 1. Save Original to Disk (Persistent)
+        perm_bin_path = await save_upload_to_disk(file, workspace_id)
         filename = file.filename or "upload"
-        _, ext = os.path.splitext(filename)
-        if not ext:
-            ext = ".bin"
-
-        # Special-case .txt: skip Docling
-        if filename.lower().endswith(".txt") or guessed_mime == "text/plain":
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                raise HTTPException(status_code=400, detail="Text file must be UTF-8.")
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
-                f.write(text)
-                tmp_txt = f.name
-            doc_id = await engine.ingest_text_file(
-                tmp_txt,
-                title=title or filename,
-                source=source,
-                workspace_id=workspace_id
-            )
-            return IngestResponse(status="ok", doc_id=doc_id)
-
-        # Write upload to disk for processing
-        with tempfile.NamedTemporaryFile(mode="wb", suffix=ext, delete=False) as f:
-            f.write(raw)
-            tmp_bin = f.name
-
-        # DIRECT PDF EXTRACTION - Use new robust hybrid extractor
-        is_pdf = ext.lower() == '.pdf' or (guessed_mime and 'pdf' in guessed_mime.lower())
         
-        if is_pdf:
-            import pdf_extractor
-            import logging
-            import asyncio
-            
-            logger = logging.getLogger("uvicorn.error")
-            logger.info(f"Extracting PDF with Hybrid Extractor: {filename} (OCR={enable_ocr}, Vision={enable_vision})")
-            
-            try:
-                # Run heavyweight OCR/extraction in thread
-                result = await asyncio.to_thread(
-                    pdf_extractor.extract_pdf,
-                    tmp_bin,
-                    title=title or filename,
-                    enable_ocr=enable_ocr,
-                    enable_vision=enable_vision
-                )
-                
-                extracted_text = result.text
-                logger.info(f"PDF extraction success. {result.page_count} pages, {result.pages_with_ocr} scanned, {result.tables_found} tables, {result.images_analyzed} images.")
-                
-            except Exception as e:
-                import traceback
-                error_msg = f"PDF extraction failed: {e}\n{traceback.format_exc()}"
-                logger.error(error_msg)
-                with open("upload_error.log", "w") as err_f:
-                    err_f.write(error_msg)
-                raise HTTPException(status_code=500, detail="PDF extraction failed. The file may be corrupted or encrypted.")
+        # MIME sniff
+        kind = filetype.guess(perm_bin_path)
+        guessed_mime = kind.mime if kind else (file.content_type or None)
+        _, ext = os.path.splitext(filename)
+
+        # 2. Extract Content
+        # Special-case .txt
+        if filename.lower().endswith(".txt") or guessed_mime == "text/plain":
+            with open(perm_bin_path, "r", encoding="utf-8") as f:
+                extracted_text = f.read()
         else:
-            # For non-PDFs, still use Docling
-            extractor = get_docling_extractor(enable_ocr=enable_ocr)
-            import asyncio
-            import logging
-            logger = logging.getLogger("uvicorn.error")
-            logger.info(f"Starting Docling extraction for {filename} (OCR={enable_ocr})...")
+            # DIRECT PDF EXTRACTION
+            is_pdf = ext.lower() == '.pdf' or (guessed_mime and 'pdf' in guessed_mime.lower())
             
-            try:
-                extracted = await asyncio.to_thread(
-                    extractor.extract, 
-                    tmp_bin, 
-                    title=title or filename, 
-                    mime=guessed_mime
-                )
-                extracted_text = extracted.text
-                logger.info(f"Docling extraction success. Text len: {len(extracted_text)}")
-            except Exception as e:
-                import traceback
-                error_msg = f"Docling extraction failed: {e}\n{traceback.format_exc()}"
-                logger.error(error_msg)
-                with open("upload_error.log", "w") as err_f:
-                    err_f.write(error_msg)
-                raise HTTPException(status_code=500, detail="Content extraction failed. Please try a different file.")
+            if is_pdf:
+                import pdf_extractor
+                import logging
+                import asyncio
+                
+                logger = logging.getLogger("uvicorn.error")
+                logger.info(f"Extracting Persistent PDF: {perm_bin_path} (OCR={enable_ocr}, Vision={enable_vision})")
+                
+                try:
+                    result = await asyncio.to_thread(
+                        pdf_extractor.extract_pdf,
+                        perm_bin_path, # Use persistent path
+                        title=title or filename,
+                        enable_ocr=enable_ocr,
+                        enable_vision=enable_vision
+                    )
+                    extracted_text = result.text
+                except Exception as e:
+                    import traceback
+                    logger.error(f"PDF extraction failed: {e}")
+                    raise HTTPException(status_code=500, detail="PDF extraction failed. File may be corrupted.")
+            else:
+                # Docling
+                extractor = get_docling_extractor(enable_ocr=enable_ocr)
+                import asyncio
+                import logging
+                logger = logging.getLogger("uvicorn.error")
+                logger.info(f"Starting Persistent Docling extraction for {filename}...")
+                
+                try:
+                    extracted = await asyncio.to_thread(
+                        extractor.extract, 
+                        perm_bin_path, 
+                        title=title or filename, 
+                        mime=guessed_mime
+                    )
+                    extracted_text = extracted.text
+                except Exception as e:
+                    logger.error(f"Docling extraction failed: {e}")
+                    raise HTTPException(status_code=500, detail="Content extraction failed.")
 
-        # Feed extracted markdown/text into existing ingestion pipeline
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        # 3. Save Extracted Markdown (Persistent)
+        perm_md_path = perm_bin_path + ".md"
+        with open(perm_md_path, "w", encoding="utf-8") as f:
             f.write(extracted_text)
-            tmp_txt = f.name
 
+        # 4. Ingest (Source=MD, URI=Original Binary)
         doc_id = await engine.ingest_text_file(
-            tmp_txt,
+            perm_md_path,
             title=title or filename,
             source=source,
-            workspace_id=workspace_id
+            workspace_id=workspace_id,
+            uri=perm_bin_path # Point to the original file
         )
         return IngestResponse(status="ok", doc_id=doc_id)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Ingest(any) failed: {e}")
-        raise HTTPException(status_code=500, detail="An unexpected error occurred during ingestion.")
-    finally:
-        for p in (tmp_txt, tmp_bin):
-            try:
-                if p and os.path.exists(p):
-                    os.remove(p)
-            except Exception:
-                pass
+        logger.error(f"Ingest(any) persistent failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/ingest/image", response_model=IngestResponse)
@@ -481,14 +464,12 @@ async def ingest_image(
     engine = get_engine()
     
     try:
-        raw = await file.read()
-        if not raw:
-            raise HTTPException(status_code=400, detail="Empty file upload.")
-        
+        # 1. Save Original Image (Persistent)
+        perm_img_path = await save_upload_to_disk(file, workspace_id)
         filename = file.filename or "image"
         
         # Validate it's an image
-        kind = filetype.guess(raw)
+        kind = filetype.guess(perm_img_path)
         if not kind or not kind.mime.startswith("image/"):
             raise HTTPException(
                 status_code=400, 
@@ -498,6 +479,9 @@ async def ingest_image(
         logger.info(f"Analyzing image with Gemini Vision: {filename}")
         
         # Analyze with vision
+        with open(perm_img_path, "rb") as f:
+            raw = f.read()
+
         try:
             result = await asyncio.to_thread(analyze_image, raw)
         except RuntimeError as e:
@@ -520,26 +504,21 @@ async def ingest_image(
 
 {result.description}
 """
-        
         logger.info(f"Vision analysis complete. Type: {result.image_type}, Content length: {len(result.description)}")
         
-        # Save to temp markdown file
-        tmp_md_path = f"ingest_{filename}.md"
-        with open(tmp_md_path, "w") as f:
+        # 2. Save Analysis MD (Persistent)
+        perm_md_path = perm_img_path + ".md"
+        with open(perm_md_path, "w", encoding="utf-8") as f:
             f.write(markdown_text)
-            
-        try:
-            # Ingest into RAG using existing file-based method
-            doc_id = await engine.ingest_text_file(
-                path=tmp_md_path,
-                title=doc_title,
-                source=source,
-                workspace_id=workspace_id
-            )
-        finally:
-            if os.path.exists(tmp_md_path):
-                os.remove(tmp_md_path)
-        
+
+        # 3. Ingest
+        doc_id = await engine.ingest_text_file(
+            path=perm_md_path,
+            title=doc_title,
+            source=source,
+            workspace_id=workspace_id,
+            uri=perm_img_path # Persistent URI
+        )
         return IngestResponse(status="ok", doc_id=doc_id)
         
     except HTTPException:

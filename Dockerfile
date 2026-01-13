@@ -31,6 +31,12 @@ COPY . .
 # Environment Defaults
 ENV PORT=8000
 ENV HOST=0.0.0.0
+# Persistence configuration
+ENV UPLOAD_DIR=/app/data/uploads
+ENV DB_PATH=/app/data/lancedb
+# Create data dir and declare volume
+RUN mkdir -p /app/data
+VOLUME ["/app/data"]
 
 # Expose Port
 EXPOSE 8000
