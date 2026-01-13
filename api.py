@@ -289,10 +289,25 @@ async def ingest_any(
             tmp_bin = f.name
 
         extractor = get_docling_extractor(enable_ocr=enable_ocr)
-        # Docling extract is sync, wrap in thread if blocking heavily
-        # extracted = await asyncio.to_thread(extractor.extract, tmp_bin, title=title or filename, mime=guessed_mime)
-        # For now, keep sync or wrap if needed. Docling might be CPU bound.
-        extracted = extractor.extract(tmp_bin, title=title or filename, mime=guessed_mime)
+        
+        # Docling extraction is CPU heavy (OCR + Layout), must run in thread
+        import asyncio
+        import logging
+        logger = logging.getLogger("uvicorn.error")
+        logger.info(f"Starting Docling extraction for {filename} (OCR={enable_ocr})...")
+        
+        try:
+            # Run in thread pool to avoid blocking main loop
+            extracted = await asyncio.to_thread(
+                extractor.extract, 
+                tmp_bin, 
+                title=title or filename, 
+                mime=guessed_mime
+            )
+            logger.info(f"Docling extraction success. Text len: {len(extracted.text)}")
+        except Exception as e:
+            logger.error(f"Docling extraction failed: {e}", exc_info=True)
+            raise e
 
         # Feed extracted markdown/text into existing ingestion pipeline
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
