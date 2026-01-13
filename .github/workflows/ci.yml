@@ -30,10 +30,18 @@ jobs:
       # We need to make sure secrets are available in repo.
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
-        # Check if key exists. If not, print warning and skip (or fail if strict).
+        # Check if OPENAI key exists
         if [ -z "$OPENAI_API_KEY" ]; then
-          echo "WARNING: OPENAI_API_KEY secret not found. Skipping live inference tests."
+          echo "WARNING: OPENAI_API_KEY secret not found. Skipping evidence tests."
         else
           python verify_evidence.py
+        fi
+
+        # Check if GEMINI key exists for Vision tests
+        if [ -z "$GEMINI_API_KEY" ]; then
+          echo "WARNING: GEMINI_API_KEY secret not found. Skipping vision tests."
+        else
+          python verify_vision.py
         fi
