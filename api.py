@@ -296,43 +296,32 @@ async def ingest_any(
             f.write(raw)
             tmp_bin = f.name
 
-        # DIRECT PDF EXTRACTION - bypass Docling entirely due to Python 3.13 crashes
+        # DIRECT PDF EXTRACTION - Use new robust hybrid extractor
         is_pdf = ext.lower() == '.pdf' or (guessed_mime and 'pdf' in guessed_mime.lower())
         
         if is_pdf:
-            import fitz  # PyMuPDF - reliable, no ML dependencies
+            import pdf_extractor
             import logging
+            import asyncio
+            
             logger = logging.getLogger("uvicorn.error")
-            logger.info(f"Extracting PDF with PyMuPDF: {filename}")
+            logger.info(f"Extracting PDF with Hybrid Extractor: {filename} (OCR={enable_ocr})")
             
             try:
-                doc = fitz.open(tmp_bin)
-                text_parts = []
+                # Run heavyweight OCR/extraction in thread
+                result = await asyncio.to_thread(
+                    pdf_extractor.extract_pdf,
+                    tmp_bin,
+                    title=title or filename,
+                    enable_ocr=enable_ocr
+                )
                 
-                for page_num, page in enumerate(doc, 1):
-                    text_parts.append(f"## Page {page_num}\n\n")
-                    text = page.get_text("text")
-                    if text.strip():
-                        text_parts.append(text)
-                    
-                    # Extract tables
-                    tables = page.find_tables()
-                    if tables:
-                        for table in tables:
-                            text_parts.append("\n**[Table]**\n")
-                            for row in table.extract():
-                                row_text = " | ".join(str(cell) if cell else "" for cell in row)
-                                text_parts.append(f"| {row_text} |\n")
-                    
-                    text_parts.append("\n---\n")
-                
-                doc.close()
-                extracted_text = "".join(text_parts)
-                logger.info(f"PyMuPDF extraction success. Text len: {len(extracted_text)}")
+                extracted_text = result.text
+                logger.info(f"PDF extraction success. {result.page_count} pages, {result.pages_with_ocr} scanned, {result.tables_found} tables.")
                 
             except Exception as e:
                 import traceback
-                error_msg = f"PyMuPDF extraction failed: {e}\n{traceback.format_exc()}"
+                error_msg = f"PDF extraction failed: {e}\n{traceback.format_exc()}"
                 logger.error(error_msg)
                 with open("upload_error.log", "w") as err_f:
                     err_f.write(error_msg)
