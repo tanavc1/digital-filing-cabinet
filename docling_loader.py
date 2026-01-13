@@ -37,10 +37,17 @@ try:
     def patched_from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         # Force disable low_cpu_mem_usage to avoid meta device
         kwargs["low_cpu_mem_usage"] = False
+        
+        # Aggressively remove device_map to prevent Accelerate from intervening
+        # This forces a standard CPU load which is safe from the Python 3.13 MetaTensor bug
+        if "device_map" in kwargs:
+            print(f"Monkey patch: Removing device_map={kwargs['device_map']} to prevent crash")
+            del kwargs["device_map"]
+            
         return original_from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
 
     AutoModelForObjectDetection.from_pretrained = patched_from_pretrained
-    print("Applied AutoModelForObjectDetection monkey patch for Python 3.13")
+    print("Applied AGGRESSIVE AutoModelForObjectDetection monkey patch for Python 3.13")
 except ImportError:
     pass
 # --------------------------------------------------
