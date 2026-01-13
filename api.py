@@ -291,44 +291,85 @@ async def ingest_any(
             )
             return IngestResponse(status="ok", doc_id=doc_id)
 
-        # Write upload to disk for Docling
+        # Write upload to disk for processing
         with tempfile.NamedTemporaryFile(mode="wb", suffix=ext, delete=False) as f:
             f.write(raw)
             tmp_bin = f.name
 
-        extractor = get_docling_extractor(enable_ocr=enable_ocr)
+        # DIRECT PDF EXTRACTION - bypass Docling entirely due to Python 3.13 crashes
+        is_pdf = ext.lower() == '.pdf' or (guessed_mime and 'pdf' in guessed_mime.lower())
         
-        # Docling extraction is CPU heavy (OCR + Layout), must run in thread
-        import asyncio
-        import logging
-        logger = logging.getLogger("uvicorn.error")
-        logger.info(f"Starting Docling extraction for {filename} (OCR={enable_ocr})...")
-        
-        try:
-            # Run in thread pool to avoid blocking main loop
-            extracted = await asyncio.to_thread(
-                extractor.extract, 
-                tmp_bin, 
-                title=title or filename, 
-                mime=guessed_mime
-            )
-            logger.info(f"Docling extraction success. Text len: {len(extracted.text)}")
-        except Exception as e:
-            import traceback
-            error_msg = f"Docling extraction failed: {e}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            with open("upload_error.log", "w") as err_f:
-                err_f.write(error_msg)
-            raise e
+        if is_pdf:
+            import fitz  # PyMuPDF - reliable, no ML dependencies
+            import logging
+            logger = logging.getLogger("uvicorn.error")
+            logger.info(f"Extracting PDF with PyMuPDF: {filename}")
+            
+            try:
+                doc = fitz.open(tmp_bin)
+                text_parts = []
+                
+                for page_num, page in enumerate(doc, 1):
+                    text_parts.append(f"## Page {page_num}\n\n")
+                    text = page.get_text("text")
+                    if text.strip():
+                        text_parts.append(text)
+                    
+                    # Extract tables
+                    tables = page.find_tables()
+                    if tables:
+                        for table in tables:
+                            text_parts.append("\n**[Table]**\n")
+                            for row in table.extract():
+                                row_text = " | ".join(str(cell) if cell else "" for cell in row)
+                                text_parts.append(f"| {row_text} |\n")
+                    
+                    text_parts.append("\n---\n")
+                
+                doc.close()
+                extracted_text = "".join(text_parts)
+                logger.info(f"PyMuPDF extraction success. Text len: {len(extracted_text)}")
+                
+            except Exception as e:
+                import traceback
+                error_msg = f"PyMuPDF extraction failed: {e}\n{traceback.format_exc()}"
+                logger.error(error_msg)
+                with open("upload_error.log", "w") as err_f:
+                    err_f.write(error_msg)
+                raise HTTPException(status_code=500, detail=f"PDF extraction failed: {e}")
+        else:
+            # For non-PDFs, still use Docling
+            extractor = get_docling_extractor(enable_ocr=enable_ocr)
+            import asyncio
+            import logging
+            logger = logging.getLogger("uvicorn.error")
+            logger.info(f"Starting Docling extraction for {filename} (OCR={enable_ocr})...")
+            
+            try:
+                extracted = await asyncio.to_thread(
+                    extractor.extract, 
+                    tmp_bin, 
+                    title=title or filename, 
+                    mime=guessed_mime
+                )
+                extracted_text = extracted.text
+                logger.info(f"Docling extraction success. Text len: {len(extracted_text)}")
+            except Exception as e:
+                import traceback
+                error_msg = f"Docling extraction failed: {e}\n{traceback.format_exc()}"
+                logger.error(error_msg)
+                with open("upload_error.log", "w") as err_f:
+                    err_f.write(error_msg)
+                raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
 
         # Feed extracted markdown/text into existing ingestion pipeline
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
-            f.write(extracted.text)
+            f.write(extracted_text)
             tmp_txt = f.name
 
         doc_id = await engine.ingest_text_file(
             tmp_txt,
-            title=extracted.title,
+            title=title or filename,
             source=source,
             workspace_id=workspace_id
         )
