@@ -26,6 +26,26 @@ class ExtractedDocument:
     used_ocr: bool
 
 
+# --- MONKEY PATCH FOR PYTHON 3.13 / PYTORCH BUG ---
+# Prevents "NotImplementedError: Cannot copy out of meta tensor"
+# by forcing low_cpu_mem_usage=False in transformers
+try:
+    from transformers import AutoModelForObjectDetection, PreTrainedModel
+    original_from_pretrained = AutoModelForObjectDetection.from_pretrained
+
+    @classmethod
+    def patched_from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        # Force disable low_cpu_mem_usage to avoid meta device
+        kwargs["low_cpu_mem_usage"] = False
+        return original_from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+
+    AutoModelForObjectDetection.from_pretrained = patched_from_pretrained
+    print("Applied AutoModelForObjectDetection monkey patch for Python 3.13")
+except ImportError:
+    pass
+# --------------------------------------------------
+
+
 class DoclingExtractor:
     """
     Production-shaped wrapper:
