@@ -37,11 +37,13 @@ class DoclingExtractor:
     def __init__(self, enable_ocr: bool = True):
         from docling.document_converter import PdfFormatOption
         from docling.datamodel.base_models import InputFormat
+        # Configure robust pipeline options
         from docling.datamodel.pipeline_options import (
             PdfPipelineOptions, 
             TableStructureOptions,
             EasyOcrOptions,
-            RapidOcrOptions
+            RapidOcrOptions,
+            AcceleratorOptions
         )
 
         # Always enable OCR if requested, using RapidOCR as the engine (pip installed)
@@ -52,11 +54,12 @@ class DoclingExtractor:
         pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options.do_cell_matching = True
         
+        # Limit Docling threads to prevent resource starvation
+        pipeline_options.accelerator_options = AcceleratorOptions(num_threads=4, device="cpu")
+        
         # Use RapidOCR (fast, accurate, pure python dependency)
         if self.enable_ocr:
             pipeline_options.ocr_options = RapidOcrOptions()
-            # If on Mac, we could technically use OcrMacOptions() but RapidOCR is more consistent cross-platform
-            # pipeline_options.ocr_options.use_gpu = False # RapidOCR handles this internally
 
         self.converter = DocumentConverter(
             format_options={

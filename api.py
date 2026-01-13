@@ -8,7 +8,15 @@ Exposes REST endpoints for:
 3. System Health Check.
 """
 import os
+# Set environment variables BEFORE importing heavy libraries (torch, numpy, onnx)
+# This prevents OpenMP/MKL from spawning too many threads and crashing Uvicorn workers
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
+import json
 import tempfile
+import asyncio
 from typing import Optional, Dict, Any, List
 
 import filetype
@@ -306,7 +314,11 @@ async def ingest_any(
             )
             logger.info(f"Docling extraction success. Text len: {len(extracted.text)}")
         except Exception as e:
-            logger.error(f"Docling extraction failed: {e}", exc_info=True)
+            import traceback
+            error_msg = f"Docling extraction failed: {e}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            with open("upload_error.log", "w") as err_f:
+                err_f.write(error_msg)
             raise e
 
         # Feed extracted markdown/text into existing ingestion pipeline
