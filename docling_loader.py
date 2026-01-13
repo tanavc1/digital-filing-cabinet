@@ -35,8 +35,15 @@ class DoclingExtractor:
     """
 
     def __init__(self, enable_ocr: bool = True):
-        # Always default to OCR=True for complex PDFs as per user request
-        self.enable_ocr = enable_ocr
+        # Check if tesseract is actually installed
+        import shutil
+        tesseract_available = shutil.which("tesseract") is not None
+        
+        # Only enable OCR if requested AND tesseract is available
+        self.enable_ocr = enable_ocr and tesseract_available
+        
+        if enable_ocr and not tesseract_available:
+            print("WARNING: OCR requested but 'tesseract' binary not found. Falling back to native PDF parsing.")
         
         # Configure robust pipeline options
         from docling.datamodel.pipeline_options import (
@@ -47,15 +54,13 @@ class DoclingExtractor:
         from docling.datamodel.settings import settings
         
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = True  # Force OCR for better layout handling of complex docs
-        pipeline_options.do_table_structure = True  # Critical for the USDA charts/tables
+        pipeline_options.do_ocr = self.enable_ocr  # Only true if available
+        pipeline_options.do_table_structure = True  # Keep table structure enabled
         pipeline_options.table_structure_options.do_cell_matching = True
         
-        # Improve OCR quality
-        pipeline_options.ocr_options.use_gpu = False # MPS not fully supported in Tesseract wrapper yet
-        
-        # Set accelerator to auto (cpu/cuda/mps if supported by docling internals)
-        # pipeline_options.accelerator_options = AcceleratorOptions(num_threads=4)
+        # Improve OCR quality settings (only relevant if OCR is on)
+        if self.enable_ocr:
+            pipeline_options.ocr_options.use_gpu = False 
 
         self.converter = DocumentConverter(
             format_options={
