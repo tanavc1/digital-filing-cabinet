@@ -1299,15 +1299,16 @@ class RAGEngine:
         if not reranked:
             return []
         
-        # If no rerank scores (reranker=None), skip filtering entirely
-        if "_rerank_score" not in reranked[0]:
-            logger.info(f"No rerank scores found - returning all {len(reranked)} candidates without filtering")
-            return reranked  # RETURN IMMEDIATELY - don't try to access _rerank_score
+        # Check if we have valid rerank scores (key exists AND value is not NaN)
+        first_score = reranked[0].get("_rerank_score")
+        if first_score is None or (isinstance(first_score, float) and not (first_score == first_score)):  # NaN check
+            logger.info(f"No valid rerank scores found - returning all {len(reranked)} candidates without filtering")
+            return reranked
             
-        # Only reach here if we have rerank scores
+        # Only reach here if we have valid rerank scores
         top_score = reranked[0]["_rerank_score"]
         floor = top_score - self.cfg.source_score_drop
-        good = [c for c in reranked if c.get("_rerank_score", 0) >= floor]
+        good = [c for c in reranked if c.get("_rerank_score", float('-inf')) >= floor]
         logger.info(f"Score filtering: top={top_score:.2f}, floor={floor:.2f}, kept {len(good)}/{len(reranked)}")
         return good
 
