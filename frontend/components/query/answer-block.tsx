@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryResult, Doc } from "@/lib/types";
-import { AlertTriangle, CheckCircle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle, ShieldAlert, Download } from "lucide-react";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { EvidenceCard } from "./evidence-card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,49 @@ interface AnswerBlockProps {
 
 export const AnswerBlock = memo(function AnswerBlock({ result, docs, statusMessage, isStreaming, isTyping }: AnswerBlockProps) {
     const getDocTitle = (id: string) => docs.find((d) => d.doc_id === id)?.title || "Unknown Doc";
+
+    const handleExportPDF = () => {
+        // Create a printable version
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+
+        const html = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Query Result Export</title>
+                <style>
+                    body { font-family: system-ui; padding: 40px; max-width: 800px; margin: 0 auto; }
+                    h1 { font-size: 24px; margin-bottom: 20px; }
+                    .answer { line-height: 1.6; margin-bottom: 30px; }
+                    .evidence { border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 4px; }
+                    .quote { background: #f5f5f5; padding: 10px; margin: 10px 0; border-left: 3px solid #007bff; }
+                    .source { font-size: 12px; color: #666; margin-top: 10px; }
+                </style>
+            </head>
+            <body>
+                <h1>Query Result</h1>
+                <div class="answer">
+                    <strong>Answer:</strong><br/>
+                    ${result.answer.replace(/\n/g, '<br/>')}
+                </div>
+                ${result.sources && result.sources.length > 0 ? `
+                    <h2>Evidence:</h2>
+                    ${result.sources.map((s, i) => `
+                        <div class="evidence">
+                            <div class="quote">${s.quote}</div>
+                            <div class="source">Source: ${getDocTitle(s.doc_id)}</div>
+                        </div>
+                    `).join('')}
+                ` : ''}
+            </body>
+            </html>
+        `;
+
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.print();
+    };
 
     // Show abstain if: Not streaming AND Not typing AND Abstained
     const isActive = isStreaming || isTyping;
@@ -79,11 +122,24 @@ export const AnswerBlock = memo(function AnswerBlock({ result, docs, statusMessa
                     ) : (
                         <div className="h-5"></div> /* Spacer */
                     )}
-                    {statusMessage && (
-                        <span className="text-xs text-blue-600 font-mono animate-pulse">
-                            {statusMessage}
-                        </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {statusMessage && (
+                            <span className="text-xs text-blue-600 font-mono animate-pulse">
+                                {statusMessage}
+                            </span>
+                        )}
+                        {result.answer && !isActive && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleExportPDF}
+                                className="gap-2 h-7 text-xs"
+                            >
+                                <Download className="w-3 h-3" />
+                                Export PDF
+                            </Button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="prose prose-sm max-w-none text-gray-800 min-h-[60px]">

@@ -1157,6 +1157,7 @@ class RAGEngine:
         title: Optional[str] = None,
         source: str = "local",
         workspace_id: Optional[str] = None,
+        progress_callback: Optional[callable] = None,
     ) -> str:
         workspace_id = normalize_workspace_id(workspace_id)
 
@@ -1180,6 +1181,9 @@ class RAGEngine:
         title_final = title or os.path.basename(path)
         logger.info(f"Ingesting doc: {title_final} (workspace_id={workspace_id}, doc_id={doc_id})")
 
+        if progress_callback:
+            await progress_callback({"stage": "summarizing", "percent": 10})
+        
         summary = await self.llm.summarize_doc(text=text, title=title_final)
 
         chunks = chunk_text_with_overlap(
@@ -1188,14 +1192,21 @@ class RAGEngine:
             overlap_ratio=self.cfg.chunk_overlap_ratio,
         )
         logger.info(f"Chunked into {len(chunks)} chunks")
+        
+        if progress_callback:
+            await progress_callback({"stage": "chunking", "percent": 20, "chunks": len(chunks)})
 
         chunk_texts = [c["text"] for c in chunks]
         embeddings: List[List[float]] = []
-        for i in tqdm(range(0, len(chunk_texts), 64), desc="Embedding chunks"):
+        total_chunks = len(chunk_texts)
+        for i in tqdm(range(0, total_chunks, 64), desc="Embedding chunks"):
             batch = chunk_texts[i:i + 64]
             embeddings.extend(
                 await asyncio.to_thread(self.models.embed, batch)
             )
+            if progress_callback:
+                progress = 20 + int((i / total_chunks) * 60)  # 20-80%
+                await progress_callback({"stage": "embedding", "percent": progress, "current": i, "total": total_chunks})
 
         chunk_rows = []
         for c, emb in zip(chunks, embeddings):

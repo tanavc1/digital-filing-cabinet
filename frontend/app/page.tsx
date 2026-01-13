@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { useQueryStream } from "@/hooks/use-query-stream";
 import { ScopeSelector } from "@/components/scope-selector";
+import { QueryHistory, addQueryToHistory } from "@/components/query/query-history";
 
 export default function SearchPage() {
   // Hooks
@@ -41,6 +42,9 @@ export default function SearchPage() {
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
+
+    // Save to history
+    addQueryToHistory(query, selectedWorkspace);
 
     await startStream(query, selectedWorkspace);
     setQuery("");
@@ -84,15 +88,19 @@ export default function SearchPage() {
 
           {/* Empty State */}
           {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-20 text-center space-y-6 opacity-50">
-              <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">
-                <Search className="w-10 h-10" />
+            <>
+              <div className="flex flex-col items-center justify-center py-20 text-center space-y-6 opacity-50">
+                <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">
+                  <Search className="w-10 h-10" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-semibold text-gray-900">Ready to help</h2>
+                  <p className="text-gray-500 mt-2">Ask a question to start a conversation with your documents.</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900">Ready to help</h2>
-                <p className="text-gray-500 mt-2">Ask a question to start a conversation with your documents.</p>
-              </div>
-            </div>
+
+              <QueryHistory onSelectQuery={(q) => { setQuery(q); }} />
+            </>
           )}
 
           {/* Messages */}
