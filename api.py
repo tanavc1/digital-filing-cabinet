@@ -20,11 +20,8 @@ import asyncio
 from typing import Optional, Dict, Any, List
 
 import filetype
-import filetype
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import StreamingResponse
-import asyncio
-import json
 from pydantic import BaseModel, Field
 
 from main import Config, RAGEngine, DEFAULT_WORKSPACE_ID

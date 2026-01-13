@@ -10,11 +10,9 @@ lancedb_data/
 accuracy_benchmark_data/
 backend.log
 backend_debug.log
+upload_error.log
 *.txt
 !requirements.txt
-!contract.txt
-!mars_temp.txt
-!project_alpha.txt
 
 # Node
 frontend/node_modules/
