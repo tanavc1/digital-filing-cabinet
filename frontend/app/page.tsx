@@ -145,7 +145,7 @@ export default function SearchPage() {
           <form onSubmit={handleSearch} className="relative shadow-lg rounded-xl overflow-hidden border border-gray-200 focus-within:ring-2 ring-blue-500/20 transition-all">
             <Search className="absolute left-4 top-4 h-5 w-5 text-gray-400" />
             <textarea
-              className="w-full pl-12 pr-24 py-4 text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px] overflow-y-auto"
+              className="w-full pl-12 pr-24 py-4 text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px]"
               placeholder={`Message ${selectedWorkspace}...`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -159,7 +159,8 @@ export default function SearchPage() {
               rows={1}
               style={{
                 height: 'auto',
-                minHeight: '56px'
+                minHeight: '56px',
+                overflowY: query.split('\n').length > 3 || query.length > 200 ? 'auto' : 'hidden'
               }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
