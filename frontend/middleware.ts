@@ -1,17 +1,5 @@
-import { auth } from "@/auth"
+export { auth as middleware } from "@/auth"
 
 export const config = {
-    matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+    matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|login).*)"],
 }
-
-export default auth((req) => {
-    const needsAuth = req.nextUrl.pathname === "/" ||
-        req.nextUrl.pathname.startsWith("/chat") ||
-        req.nextUrl.pathname.startsWith("/documents")
-    const isLoggedIn = !!req.auth
-
-    if (needsAuth && !isLoggedIn) {
-        const newUrl = new URL("/login", req.nextUrl.origin)
-        return Response.redirect(newUrl)
-    }
-})

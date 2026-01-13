@@ -26,9 +26,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         signIn: "/login", // Custom login page
     },
     callbacks: {
-        authorized: async ({ auth }) => {
-            // Logged in users are authenticated, otherwise redirect to login
-            return !!auth
+        authorized: async ({ auth, request }) => {
+            const isLoggedIn = !!auth?.user
+            const isOnLoginPage = request.nextUrl.pathname.startsWith('/login')
+
+            if (isOnLoginPage) {
+                if (isLoggedIn) {
+                    return Response.redirect(new URL('/', request.nextUrl))
+                }
+                return true // Allow access to login page
+            }
+
+            return isLoggedIn // Require auth for all other pages
         },
     },
+    trustHost: true,
 })
