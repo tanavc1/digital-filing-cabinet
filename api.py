@@ -63,19 +63,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_validation():
-    """Validate environment and pre-warm engine on startup."""
+    """Validate environment on startup."""
     required_vars = ["OPENAI_API_KEY"]
     missing = [k for k in required_vars if not os.getenv(k)]
     if missing:
         logger.error(f"Missing required environment variables: {missing}")
         raise RuntimeError(f"Missing required env vars: {missing}")
     
-    logger.info("Environment validated. Starting engine pre-warm...")
-    try:
-        get_engine()  # Pre-warm the engine
-        logger.info("Engine pre-warmed successfully.")
-    except Exception as e:
-        logger.warning(f"Engine pre-warm failed (will retry on first request): {e}")
+    logger.info("Environment validated. Server ready (models will load on first request).")
 
 
 _ENGINE: Optional[RAGEngine] = None
