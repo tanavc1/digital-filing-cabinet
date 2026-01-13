@@ -819,9 +819,13 @@ class LocalModels:
         )
         try:
             logger.info(f"Loading rerank model: {rerank_name}")
-            self.reranker = CrossEncoder(rerank_name, device="cpu")
+            self.reranker = CrossEncoder(
+                rerank_name, 
+                device="cpu",
+                automodel_args={"low_cpu_mem_usage": False}
+            )
         except Exception as e:
-            logger.error(f"Failed to load Rerank model (likely Python 3.13/MPS issue): {e}")
+            logger.error(f"Failed to load Rerank model: {e}")
             logger.warning("Proceeding without Reranker (Semantic Search only).")
             self.reranker = None
 
