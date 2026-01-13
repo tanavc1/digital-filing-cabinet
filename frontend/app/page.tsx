@@ -143,15 +143,31 @@ export default function SearchPage() {
       <div className="bg-white border-t p-4 flex-shrink-0 z-20">
         <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSearch} className="relative shadow-lg rounded-xl overflow-hidden border border-gray-200 focus-within:ring-2 ring-blue-500/20 transition-all">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <Input
-              className="pl-12 pr-24 h-14 text-lg border-none focus-visible:ring-0 rounded-none bg-white"
+            <Search className="absolute left-4 top-4 h-5 w-5 text-gray-400" />
+            <textarea
+              className="w-full pl-12 pr-24 py-4 text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px] overflow-y-auto"
               placeholder={`Message ${selectedWorkspace}...`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSearch(e as any);
+                }
+              }}
               disabled={isStreaming}
+              rows={1}
+              style={{
+                height: 'auto',
+                minHeight: '56px'
+              }}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                target.style.height = 'auto';
+                target.style.height = Math.min(target.scrollHeight, 200) + 'px';
+              }}
             />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+            <div className="absolute right-2 bottom-2">
               {isStreaming ? (
                 <Button
                   type="button"
