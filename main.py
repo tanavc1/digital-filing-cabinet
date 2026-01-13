@@ -1298,9 +1298,16 @@ class RAGEngine:
     def _select_good_sources(self, reranked: List[Dict]) -> List[Dict]:
         if not reranked:
             return []
+        
+        # If no rerank scores (reranker=None), skip filtering - just return all
+        if "_rerank_score" not in reranked[0]:
+            logger.info("No rerank scores found - skipping score-based filtering")
+            return reranked  # Return ALL candidates since we can't filter by score
+            
         top_score = reranked[0]["_rerank_score"]
         floor = top_score - self.cfg.source_score_drop
         good = [c for c in reranked if c["_rerank_score"] >= floor]
+        logger.info(f"Score filtering: top={top_score:.2f}, floor={floor:.2f}, kept {len(good)}/{len(reranked)}")
         return good
 
     def query(
@@ -1558,9 +1565,8 @@ class RAGEngine:
                     wanted = set(doc_ids)
                     hits = [r for r in hits if r.get("doc_id") in wanted]
                 return hits
-            except Exception:
-                return []
-            except Exception:
+            except Exception as e:
+                logger.error(f"BM25 search failed: {e}")
                 return []
 
         def run_vector():
@@ -1579,6 +1585,8 @@ class RAGEngine:
             asyncio.to_thread(run_bm25),
             asyncio.to_thread(run_vector)
         )
+        
+        logger.info(f"BM25 hits: {len(bm25_hits)}, Vector hits: {len(vec_hits)}")
         
         # 2. Normalize and Fuse
         if not bm25_hits: bm25_hits = []
@@ -1628,15 +1636,20 @@ class RAGEngine:
                 candidate_map[r["chunk_id"]] = dict(r)
 
         fused_candidates = [candidate_map[cid] for cid in fused_id_set if cid in candidate_map]
+        
+        logger.info(f"Fused candidates: {len(fused_candidates)}")
 
         if not fused_candidates:
+            logger.warning("No fused candidates - returning empty")
             return []
 
         # 3. Rerank
         reranked = self.models.rerank(question, fused_candidates)
+        logger.info(f"Reranked candidates: {len(reranked)}")
 
         # 4. Filter
         good_candidates = self._select_good_sources(reranked)
+        logger.info(f"Good candidates after filtering: {len(good_candidates)}")
         return good_candidates[:5] # Top 5 for extraction
 
     async def _extract_evidence_batched(self, question: str, candidates: List[Dict]) -> Dict:
