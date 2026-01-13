@@ -195,7 +195,6 @@ def list_docs(workspace_id: str = DEFAULT_WORKSPACE_ID) -> Dict[str, Any]:
             })
         return {"status": "ok", "workspace_id": workspace_id, "documents": cleaned}
     except Exception as e:
-    except Exception as e:
         logger.error(f"List docs failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve document list.")
 
@@ -210,7 +209,6 @@ def delete_doc(doc_id: str, workspace_id: str = DEFAULT_WORKSPACE_ID) -> Dict[st
         return {"status": "ok", "workspace_id": workspace_id, "doc_id": doc_id}
     except HTTPException:
         raise
-    except Exception as e:
     except Exception as e:
         logger.error(f"Delete doc failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete document.")
@@ -242,7 +240,6 @@ async def ingest_text(req: IngestTextRequest) -> IngestResponse:
             workspace_id=req.workspace_id
         )
         return IngestResponse(status="ok", doc_id=doc_id)
-    except Exception as e:
     except Exception as e:
         logger.error(f"Ingest failed: {e}")
         raise HTTPException(status_code=500, detail="Document ingestion failed. Please verify the file format.")
@@ -383,8 +380,6 @@ async def ingest_any(
                 logger.error(error_msg)
                 with open("upload_error.log", "w") as err_f:
                     err_f.write(error_msg)
-                with open("upload_error.log", "w") as err_f:
-                    err_f.write(error_msg)
                 raise HTTPException(status_code=500, detail="PDF extraction failed. The file may be corrupted or encrypted.")
         else:
             # For non-PDFs, still use Docling
@@ -409,8 +404,6 @@ async def ingest_any(
                 logger.error(error_msg)
                 with open("upload_error.log", "w") as err_f:
                     err_f.write(error_msg)
-                with open("upload_error.log", "w") as err_f:
-                    err_f.write(error_msg)
                 raise HTTPException(status_code=500, detail="Content extraction failed. Please try a different file.")
 
         # Feed extracted markdown/text into existing ingestion pipeline
@@ -428,7 +421,6 @@ async def ingest_any(
 
     except HTTPException:
         raise
-    except Exception as e:
     except Exception as e:
         logger.error(f"Ingest(any) failed: {e}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred during ingestion.")
@@ -528,8 +520,6 @@ async def ingest_image(
         import traceback
         error_msg = f"Image ingestion failed: {e}\n{traceback.format_exc()}"
         logger.error(error_msg)
-        with open("upload_error.log", "w") as f:
-            f.write(error_msg)
         with open("upload_error.log", "w") as f:
             f.write(error_msg)
         raise HTTPException(status_code=500, detail="An unexpected error occurred during image processing.")
@@ -664,7 +654,6 @@ async def query(request: Request, req: QueryRequest) -> QueryResponse:
             explanation=out.get("explanation"),
             closest_mentions=closest,
         )
-    except Exception as e:
     except Exception as e:
         logger.error(f"Query failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to process your query.")
