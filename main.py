@@ -813,8 +813,13 @@ class LocalModels:
     def __init__(self, embed_name: str, rerank_name: str):
         logger.info(f"Loading embed model: {embed_name}")
         self.embedder = SentenceTransformer(embed_name, device="cpu")
-        logger.info(f"Loading rerank model: {rerank_name}")
-        self.reranker = CrossEncoder(rerank_name, device="cpu")
+        try:
+            logger.info(f"Loading rerank model: {rerank_name}")
+            self.reranker = CrossEncoder(rerank_name, device="cpu")
+        except Exception as e:
+            logger.error(f"Failed to load Rerank model (likely Python 3.13/MPS issue): {e}")
+            logger.warning("Proceeding without Reranker (Semantic Search only).")
+            self.reranker = None
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         vecs = self.embedder.encode(
@@ -831,6 +836,11 @@ class LocalModels:
     def rerank(self, query: str, candidates: List[Dict]) -> List[Dict]:
         if not candidates:
             return []
+        
+        # Fallback if reranker failed to load
+        if self.reranker is None:
+            return candidates
+
         pairs = [(query, c["text"]) for c in candidates]
         scores = self.reranker.predict(pairs)
         out = []
