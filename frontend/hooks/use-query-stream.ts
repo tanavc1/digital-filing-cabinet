@@ -149,7 +149,10 @@ export function useQueryStream(): UseQueryStreamResult {
 
             const response = await fetch(`${API_URL}/query_stream`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-API-Key": process.env.NEXT_PUBLIC_API_SECRET || ""
+                },
                 body: JSON.stringify({
                     q,
                     workspace_id: workspaceId,

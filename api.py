@@ -60,6 +60,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def verify_api_key(request: Request, call_next):
+    """
+    Optional API Key verification.
+    If API_SECRET is set in .env, all non-public endpoints require 'X-API-Key' header.
+    """
+    # 1. Allow Public Endpoints
+    if request.url.path in ["/", "/health", "/docs", "/openapi.json", "/redoc"]:
+        return await call_next(request)
+        
+    # 2. Allow CORS Preflight
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # 3. Check Secret
+    secret = os.getenv("API_SECRET")
+    if not secret:
+        # Development mode (no secret set)
+        return await call_next(request)
+        
+    # 4. Verify Header
+    client_key = request.headers.get("x-api-key")
+    if client_key != secret:
+        logger.warning(f"Unauthorized access attempt from {request.client.host}")
+        return StreamingResponse(content=iter(["Unauthorized"]), status_code=401)
+        
+    return await call_next(request)
+
 
 @app.on_event("startup")
 async def startup_validation():

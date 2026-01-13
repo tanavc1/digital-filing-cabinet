@@ -7,6 +7,15 @@ const api = axios.create({
     baseURL: API_Base,
 });
 
+// Inject API Secret if configured (for Pilot security)
+api.interceptors.request.use((config) => {
+    const secret = process.env.NEXT_PUBLIC_API_SECRET;
+    if (secret) {
+        config.headers["X-API-Key"] = secret;
+    }
+    return config;
+});
+
 export const listDocs = async (workspaceId: string): Promise<Doc[]> => {
     const res = await api.get("/documents", {
         params: { workspace_id: workspaceId },
