@@ -1,18 +1,29 @@
-# Base Image
-FROM python:3.11-slim
+# Builder Stage
+FROM python:3.11-slim as builder
 
-# Working Directory
 WORKDIR /app
 
-# System Dependencies (minimal for building python extensions if needed)
 RUN apt-get update && apt-get install -y \
     build-essential \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python Dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Runner Stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime libs only
+RUN apt-get update && apt-get install -y \
+    libmagic1 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
 
 # Copy Application Code
 COPY . .
