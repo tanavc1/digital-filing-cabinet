@@ -1,4 +1,9 @@
 #!/bin/bash
+# Load environment variables
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # Start Backend
 echo "Starting Backend on port 8000..."
 uvicorn api:app --reload --host 0.0.0.0 --port 8000 &

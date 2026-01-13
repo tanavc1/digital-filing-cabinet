@@ -17,28 +17,66 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import json
 import tempfile
 import asyncio
+import logging
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 import filetype
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from main import Config, RAGEngine, DEFAULT_WORKSPACE_ID
 from docling_loader import DoclingExtractor
 
+# Production-grade logging
+logger = logging.getLogger("api")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
-app = FastAPI(title="Digital Filing Cabinet API", version="0.4.0")
+# Rate limiter (10 queries per minute per IP)
+limiter = Limiter(key_func=get_remote_address)
+
+
+
+app = FastAPI(title="Digital Filing Cabinet API", version="0.5.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# Environment-based CORS (permissive in dev, configurable in prod)
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_validation():
+    """Validate environment and pre-warm engine on startup."""
+    required_vars = ["OPENAI_API_KEY"]
+    missing = [k for k in required_vars if not os.getenv(k)]
+    if missing:
+        logger.error(f"Missing required environment variables: {missing}")
+        raise RuntimeError(f"Missing required env vars: {missing}")
+    
+    logger.info("Environment validated. Starting engine pre-warm...")
+    try:
+        get_engine()  # Pre-warm the engine
+        logger.info("Engine pre-warmed successfully.")
+    except Exception as e:
+        logger.warning(f"Engine pre-warm failed (will retry on first request): {e}")
+
 
 _ENGINE: Optional[RAGEngine] = None
 _DOCLING_NO_OCR: Optional[DoclingExtractor] = None
@@ -123,7 +161,13 @@ class QueryResponse(BaseModel):
 # ----------------------------
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok"}
+    """Enhanced health check for monitoring systems."""
+    return {
+        "status": "healthy",
+        "version": "0.5.0",
+        "engine_loaded": _ENGINE is not None,
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    }
 
 
 @app.get("/documents")
@@ -484,7 +528,8 @@ async def ingest_any_stream(
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(req: QueryRequest) -> QueryResponse:
+@limiter.limit("10/minute")
+async def query(request: Request, req: QueryRequest) -> QueryResponse:
     engine = get_engine()
     try:
         out = await engine.query(
