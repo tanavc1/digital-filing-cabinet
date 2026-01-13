@@ -109,7 +109,7 @@ export function UploadButton({ onUploadComplete }: { onUploadComplete: () => voi
                 ref={fileInputRef}
                 className="hidden"
                 onChange={handleFileChange}
-                accept=".pdf,.docx,.pptx,.txt"
+                accept=".pdf,.docx,.pptx,.txt,.png,.jpg,.jpeg,.gif,.webp"
                 multiple
             />
             <Button

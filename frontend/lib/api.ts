@@ -28,12 +28,21 @@ export const ingestFile = async (
     const formData = new FormData();
     formData.append("file", file);
 
-    // Note: Backend endpoint for multipart might be /ingest/any or similar. 
-    // Assuming /ingest/any based on original code. 
-    // If backend only has /ingest/text, this needs update. 
-    // But for now, restoring original logic for upload.
-    const res = await api.post("/ingest/any", formData, {
-        params: { workspace_id: workspaceId },
+    // Determine if this is an image file
+    const isImage = file.type.startsWith("image/") ||
+        /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(file.name);
+
+    // Use appropriate endpoint
+    const endpoint = isImage ? "/ingest/image" : "/ingest/any";
+
+    // For PDFs, enable vision by default to analyze charts/images
+    const params: any = { workspace_id: workspaceId };
+    if (file.name.toLowerCase().endsWith(".pdf")) {
+        params.enable_vision = true;
+    }
+
+    const res = await api.post(endpoint, formData, {
+        params,
         headers: { "Content-Type": "multipart/form-data" },
         onUploadProgress,
     });
