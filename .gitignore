@@ -1,0 +1,27 @@
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# DB & Data
+lancedb_data/
+accuracy_benchmark_data/
+backend.log
+backend_debug.log
+*.txt
+!requirements.txt
+!contract.txt
+!mars_temp.txt
+!project_alpha.txt
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

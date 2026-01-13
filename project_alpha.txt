@@ -1,0 +1,14 @@
+
+    Project Alpha Financial Overview
+    
+    Phase 1:
+    - Budget: $1.5M
+    - Timeline: Q1-Q2
+    
+    Phase 2:
+    - Budget: $2.0M
+    - Timeline: Q3-Q4
+    
+    Phase 3:
+    - Budget: TBD
+    

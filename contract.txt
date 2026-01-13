@@ -1,0 +1,10 @@
+
+    SERVICE LEVEL AGREEMENT (SLA) - 2024
+    
+    1. Scope
+    This agreement covers the delivery of widgets.
+    
+    2. Penalties
+    The penalty for late delivery is exactly $5,000 per day, capped at $50,000 total.
+    Exceptions apply for force majeure.
+    

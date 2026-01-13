@@ -1,0 +1,27 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+.venv
+venv
+env
+.env
+backend.log
+backend_debug.log
+
+# Data (Don't copy db into image, mount it instead)
+lancedb_data
+accuracy_benchmark_data
+sample_docs
+sample_docs_real
+
+# Frontend (Don't copy frontend source into backend image)
+frontend
+frontend/.next
+frontend/node_modules
+
+# Misc
+.DS_Store

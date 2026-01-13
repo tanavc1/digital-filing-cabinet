@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pilot-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./lancedb_data:/app/lancedb_data
+    environment:
+      # Inject secrets from host .env
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL_ID=${OPENAI_MODEL_ID}
+    env_file:
+      - .env
+    networks:
+      - pilot-net
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser needs to hit this URL. 
+        # For local Docker usage, this is localhost:8000.
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    container_name: pilot-web
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - pilot-net
+    depends_on:
+      - api
+
+networks:
+  pilot-net:
+    driver: bridge
