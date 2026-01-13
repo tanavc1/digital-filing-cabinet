@@ -1668,7 +1668,6 @@ class RAGEngine:
                 doc_id=c["doc_id"],
                 center_chunk_index=c["chunk_index"],
                 window=2  # Increased to capture document titles and section headers
-            ) 
             )
             full_text = "\n".join([n["text"] for n in neighbors])
             window_chunk_ids = [n["chunk_id"] for n in neighbors]
