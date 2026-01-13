@@ -489,20 +489,33 @@ async def ingest_image(
         
         logger.info(f"Vision analysis complete. Type: {result.image_type}, Content length: {len(result.description)}")
         
-        # Ingest into RAG
-        doc_id = engine.ingest_text(
-            text=markdown_text,
-            title=doc_title,
-            source=source,
-            workspace_id=workspace_id
-        )
+        # Save to temp markdown file
+        tmp_md_path = f"ingest_{filename}.md"
+        with open(tmp_md_path, "w") as f:
+            f.write(markdown_text)
+            
+        try:
+            # Ingest into RAG using existing file-based method
+            doc_id = await engine.ingest_text_file(
+                path=tmp_md_path,
+                title=doc_title,
+                source=source,
+                workspace_id=workspace_id
+            )
+        finally:
+            if os.path.exists(tmp_md_path):
+                os.remove(tmp_md_path)
         
         return IngestResponse(status="ok", doc_id=doc_id)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Image ingestion failed: {e}")
+        import traceback
+        error_msg = f"Image ingestion failed: {e}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        with open("upload_error.log", "w") as f:
+            f.write(error_msg)
         raise HTTPException(status_code=500, detail=f"Image ingestion failed: {e}")
 
 
