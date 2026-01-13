@@ -295,11 +295,6 @@ def extract_pdf(
         
         all_parts.append("\n\n".join(page_parts))
     
-    doc.close()
-    
-    # Combine all pages
-    full_text = "\n\n---\n\n".join(all_parts)
-    
     # Add metadata header
     header = f"# {pdf_title}\n\n"
     if pages_with_ocr > 0:
@@ -313,6 +308,8 @@ def extract_pdf(
         title=pdf_title
     )
     
+    doc.close()
+
     logger.info(f"Extraction complete: {len(result.text)} chars, {pages_with_ocr} OCR pages, {total_tables} tables")
     
     return result
