@@ -295,6 +295,9 @@ def extract_pdf(
         
         all_parts.append("\n\n".join(page_parts))
     
+    # Combine all pages
+    full_text = "\n\n---\n\n".join(all_parts)
+    
     # Add metadata header
     header = f"# {pdf_title}\n\n"
     if pages_with_ocr > 0:
