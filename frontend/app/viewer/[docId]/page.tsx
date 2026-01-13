@@ -43,10 +43,10 @@ export default function ViewerPage() {
             {/* Header */}
             <div className="border-b bg-white p-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
                 <div className="flex items-center gap-4">
-                    <Link href="/">
+                    <Link href="/documents">
                         <Button variant="ghost" size="sm" className="gap-2">
                             <ArrowLeft className="w-4 h-4" />
-                            Back to Search
+                            Back to Documents
                         </Button>
                     </Link>
                     <div className="h-6 w-px bg-gray-200" />
