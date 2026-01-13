@@ -5,7 +5,9 @@ export const config = {
 }
 
 export default auth((req) => {
-    const needsAuth = req.nextUrl.pathname === "/" || req.nextUrl.pathname.startsWith("/chat")
+    const needsAuth = req.nextUrl.pathname === "/" ||
+        req.nextUrl.pathname.startsWith("/chat") ||
+        req.nextUrl.pathname.startsWith("/documents")
     const isLoggedIn = !!req.auth
 
     if (needsAuth && !isLoggedIn) {
