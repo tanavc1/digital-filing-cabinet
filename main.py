@@ -812,9 +812,9 @@ def rrf_fuse(
 class LocalModels:
     def __init__(self, embed_name: str, rerank_name: str):
         logger.info(f"Loading embed model: {embed_name}")
-        self.embedder = SentenceTransformer(embed_name)
+        self.embedder = SentenceTransformer(embed_name, device="cpu")
         logger.info(f"Loading rerank model: {rerank_name}")
-        self.reranker = CrossEncoder(rerank_name)
+        self.reranker = CrossEncoder(rerank_name, device="cpu")
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         vecs = self.embedder.encode(
