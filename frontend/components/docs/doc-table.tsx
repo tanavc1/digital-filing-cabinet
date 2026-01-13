@@ -21,12 +21,14 @@ interface DocTableProps {
 }
 
 export function DocTable({ docs, onDelete }: DocTableProps) {
-    const { workspace } = useWorkspace();
+    const { workspace, refreshDocs } = useWorkspace();
 
     const handleDelete = async (docId: string) => {
         if (confirm("Are you sure you want to delete this document?")) {
             await deleteDoc(docId, workspace.id);
             onDelete();
+            // Update global count in sidebar
+            refreshDocs();
         }
     };
 
@@ -64,14 +66,15 @@ export function DocTable({ docs, onDelete }: DocTableProps) {
                             </TableCell>
                             <TableCell className="text-right">
                                 <div className="flex justify-end gap-2">
-                                    <Link href={`/viewer/${doc.doc_id}`}>
-                                        <Button variant="ghost" size="icon">
+                                    <Link href={`/viewer/${doc.doc_id}`} className="cursor-pointer">
+                                        <Button variant="ghost" size="icon" className="cursor-pointer hover:bg-gray-100">
                                             <Eye className="w-4 h-4 text-gray-500" />
                                         </Button>
                                     </Link>
                                     <Button
                                         variant="ghost"
                                         size="icon"
+                                        className="cursor-pointer hover:bg-red-50"
                                         onClick={() => handleDelete(doc.doc_id)}
                                     >
                                         <Trash2 className="w-4 h-4 text-red-500" />

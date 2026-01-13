@@ -115,7 +115,7 @@ export function UploadButton({ onUploadComplete }: { onUploadComplete: () => voi
             <Button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
-                className="gap-2"
+                className="gap-2 cursor-pointer"
             >
                 {isProcessing ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

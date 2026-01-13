@@ -9,16 +9,17 @@ import { UploadButton } from "@/components/docs/upload-button";
 import { Loader2 } from "lucide-react";
 
 export default function DocumentsPage() {
-    const { workspace } = useWorkspace();
+    const { workspace, refreshDocs: refreshGlobalDocs } = useWorkspace();
     const [docs, setDocs] = useState<Doc[]>([]);
     const [loading, setLoading] = useState(true);
 
     const fetchDocs = async () => {
         setLoading(true);
         try {
-            // api.ts listDocs() already returns Doc[]
             const docsList: Doc[] = await listDocs(workspace.id);
             setDocs(docsList);
+            // Update global count in sidebar
+            refreshGlobalDocs();
         } catch (e) {
             console.error(e);
         } finally {
