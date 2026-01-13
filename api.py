@@ -195,7 +195,9 @@ def list_docs(workspace_id: str = DEFAULT_WORKSPACE_ID) -> Dict[str, Any]:
             })
         return {"status": "ok", "workspace_id": workspace_id, "documents": cleaned}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"List docs failed: {e}")
+    except Exception as e:
+        logger.error(f"List docs failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve document list.")
 
 
 @app.delete("/documents/{doc_id}")
@@ -209,7 +211,9 @@ def delete_doc(doc_id: str, workspace_id: str = DEFAULT_WORKSPACE_ID) -> Dict[st
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Delete doc failed: {e}")
+    except Exception as e:
+        logger.error(f"Delete doc failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete document.")
 
 
 @app.get("/documents/{doc_id}/content")
@@ -239,7 +243,9 @@ async def ingest_text(req: IngestTextRequest) -> IngestResponse:
         )
         return IngestResponse(status="ok", doc_id=doc_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingest failed: {e}")
+    except Exception as e:
+        logger.error(f"Ingest failed: {e}")
+        raise HTTPException(status_code=500, detail="Document ingestion failed. Please verify the file format.")
     finally:
         try:
             if tmp_path and os.path.exists(tmp_path):
@@ -377,7 +383,9 @@ async def ingest_any(
                 logger.error(error_msg)
                 with open("upload_error.log", "w") as err_f:
                     err_f.write(error_msg)
-                raise HTTPException(status_code=500, detail=f"PDF extraction failed: {e}")
+                with open("upload_error.log", "w") as err_f:
+                    err_f.write(error_msg)
+                raise HTTPException(status_code=500, detail="PDF extraction failed. The file may be corrupted or encrypted.")
         else:
             # For non-PDFs, still use Docling
             extractor = get_docling_extractor(enable_ocr=enable_ocr)
@@ -401,7 +409,9 @@ async def ingest_any(
                 logger.error(error_msg)
                 with open("upload_error.log", "w") as err_f:
                     err_f.write(error_msg)
-                raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
+                with open("upload_error.log", "w") as err_f:
+                    err_f.write(error_msg)
+                raise HTTPException(status_code=500, detail="Content extraction failed. Please try a different file.")
 
         # Feed extracted markdown/text into existing ingestion pipeline
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
@@ -419,7 +429,9 @@ async def ingest_any(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingest(any) failed: {e}")
+    except Exception as e:
+        logger.error(f"Ingest(any) failed: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during ingestion.")
     finally:
         for p in (tmp_txt, tmp_bin):
             try:
@@ -470,11 +482,13 @@ async def ingest_image(
             result = await asyncio.to_thread(analyze_image, raw)
         except RuntimeError as e:
             if "GEMINI_API_KEY" in str(e):
-                raise HTTPException(status_code=500, detail="Server Configuration Error: GEMINI_API_KEY is not set in .env")
+                logger.error("GEMINI_API_KEY missing from .env")
+                raise HTTPException(status_code=500, detail="Vision service is not properly configured.")
             raise e
         
         if result.confidence == 0:
-            raise HTTPException(status_code=500, detail=f"Vision analysis failed: {result.description}")
+            logger.error(f"Vision failure: {result.description}")
+            raise HTTPException(status_code=500, detail="Image analysis could not interpret the content.")
         
         # Create markdown document from vision result
         doc_title = title or filename
@@ -516,7 +530,9 @@ async def ingest_image(
         logger.error(error_msg)
         with open("upload_error.log", "w") as f:
             f.write(error_msg)
-        raise HTTPException(status_code=500, detail=f"Image ingestion failed: {e}")
+        with open("upload_error.log", "w") as f:
+            f.write(error_msg)
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during image processing.")
 
 
 @app.post("/ingest/any/stream")
@@ -649,7 +665,9 @@ async def query(request: Request, req: QueryRequest) -> QueryResponse:
             closest_mentions=closest,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query failed: {e}")
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process your query.")
 
 
 @app.post("/rebuild-bm25")
