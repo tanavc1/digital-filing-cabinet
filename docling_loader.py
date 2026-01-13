@@ -35,8 +35,15 @@ class DoclingExtractor:
     """
 
     def __init__(self, enable_ocr: bool = True):
-        # Check if tesseract is actually installed
         import shutil
+        from docling.document_converter import PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions, 
+            TableStructureOptions
+        )
+
+        # Check if tesseract is actually installed
         tesseract_available = shutil.which("tesseract") is not None
         
         # Only enable OCR if requested AND tesseract is available
@@ -45,26 +52,17 @@ class DoclingExtractor:
         if enable_ocr and not tesseract_available:
             print("WARNING: OCR requested but 'tesseract' binary not found. Falling back to native PDF parsing.")
         
-        # Configure robust pipeline options
-        from docling.datamodel.pipeline_options import (
-            PdfPipelineOptions, 
-            TableStructureOptions,
-            AcceleratorOptions
-        )
-        from docling.datamodel.settings import settings
-        
         pipeline_options = PdfPipelineOptions()
-        pipeline_options.do_ocr = self.enable_ocr  # Only true if available
-        pipeline_options.do_table_structure = True  # Keep table structure enabled
+        pipeline_options.do_ocr = self.enable_ocr
+        pipeline_options.do_table_structure = True
         pipeline_options.table_structure_options.do_cell_matching = True
         
-        # Improve OCR quality settings (only relevant if OCR is on)
         if self.enable_ocr:
             pipeline_options.ocr_options.use_gpu = False 
 
         self.converter = DocumentConverter(
             format_options={
-                "pdf": pipeline_options, # Apply specifically to PDF
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
 
