@@ -6,6 +6,7 @@ import { listDocs } from "@/lib/api";
 import { Doc } from "@/lib/types";
 import { DocTable } from "@/components/docs/doc-table";
 import { UploadButton } from "@/components/docs/upload-button";
+import { ZipUploadButton } from "@/components/docs/zip-upload-button";
 import { Loader2 } from "lucide-react";
 
 export default function DocumentsPage() {
@@ -40,7 +41,10 @@ export default function DocumentsPage() {
                         Manage evidence sources for {workspace.label}.
                     </p>
                 </div>
-                <UploadButton onUploadComplete={fetchDocs} />
+                <div className="flex items-center gap-3">
+                    <ZipUploadButton onUploadComplete={fetchDocs} />
+                    <UploadButton onUploadComplete={fetchDocs} />
+                </div>
             </div>
 
             {loading ? (

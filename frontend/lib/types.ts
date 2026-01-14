@@ -10,6 +10,7 @@ export interface Doc {
     created_at: number;
     modified_at: number;
     uri?: string;
+    folder_path?: string;
     summary_text?: string;
 }
 

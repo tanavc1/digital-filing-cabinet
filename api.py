@@ -18,6 +18,9 @@ import json
 import tempfile
 import asyncio
 import logging
+import zipfile
+import shutil
+import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -153,6 +156,16 @@ class IngestTextRequest(BaseModel):
 class IngestResponse(BaseModel):
     status: str
     doc_id: str
+
+
+class ZipIngestResponse(BaseModel):
+    """Response for bulk ZIP ingestion."""
+    status: str
+    total_files: int
+    ingested: int
+    skipped: int
+    errors: List[str] = []
+    doc_ids: List[str] = []
 
 
 class QueryRequest(BaseModel):
@@ -349,6 +362,7 @@ async def ingest_any(
     workspace_id: str = DEFAULT_WORKSPACE_ID,
     source: str = "local",
     title: Optional[str] = None,
+    folder_path: Optional[str] = None,
     enable_ocr: bool = False,
     enable_vision: bool = False,
     file: UploadFile = File(...),
@@ -359,6 +373,7 @@ async def ingest_any(
     - Uses Docling to convert -> Markdown text -> your existing ingestion pipeline.
     - OCR optional: enable_ocr=true (requires OCR deps installed).
     - Vision optional: enable_vision=true (uses Gemini to analyze images in PDFs).
+    - folder_path: Original folder path within a Data Room (for filtering).
     """
     engine = get_engine()
 
@@ -433,7 +448,8 @@ async def ingest_any(
             title=title or filename,
             source=source,
             workspace_id=workspace_id,
-            uri=perm_bin_path # Point to the original file
+            uri=perm_bin_path, # Point to the original file
+            folder_path=folder_path
         )
         return IngestResponse(status="ok", doc_id=doc_id)
 
@@ -530,6 +546,198 @@ async def ingest_image(
         with open("upload_error.log", "w") as f:
             f.write(error_msg)
         raise HTTPException(status_code=500, detail="An unexpected error occurred during image processing.")
+
+
+# Supported file extensions for ZIP ingestion
+SUPPORTED_EXTENSIONS = {'.pdf', '.docx', '.pptx', '.xlsx', '.txt', '.md', '.html', '.htm', '.png', '.jpg', '.jpeg', '.gif', '.webp'}
+
+
+@app.post("/ingest/zip", response_model=ZipIngestResponse)
+async def ingest_zip(
+    workspace_id: str = DEFAULT_WORKSPACE_ID,
+    source: str = "dataroom",
+    enable_ocr: bool = False,
+    enable_vision: bool = False,
+    file: UploadFile = File(...),
+) -> ZipIngestResponse:
+    """
+    Bulk Data Room ingestion from a ZIP file.
+    
+    - Extracts the ZIP archive.
+    - Recursively walks all folders.
+    - Ingests each supported file (PDF, DOCX, TXT, images, etc.).
+    - Preserves folder paths as metadata for filtering.
+    
+    Returns summary of ingested files.
+    """
+    engine = get_engine()
+    
+    # Validate it's a ZIP
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="File must be a ZIP archive.")
+    
+    # Save ZIP to temp
+    temp_zip_dir = tempfile.mkdtemp(prefix="zip_upload_")
+    zip_path = os.path.join(temp_zip_dir, file.filename)
+    
+    try:
+        # Save uploaded file
+        with open(zip_path, "wb") as f:
+            while content := await file.read(1024 * 1024):  # 1MB chunks
+                f.write(content)
+        
+        # Extract ZIP
+        extract_dir = os.path.join(temp_zip_dir, "extracted")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+        
+        logger.info(f"Extracted ZIP to {extract_dir}")
+        
+        # Walk extracted files
+        total_files = 0
+        ingested = 0
+        skipped = 0
+        errors = []
+        doc_ids = []
+        
+        for root, dirs, files in os.walk(extract_dir):
+            # Skip hidden directories (like __MACOSX)
+            dirs[:] = [d for d in dirs if not d.startswith('.') and not d.startswith('__')]
+            
+            for filename in files:
+                # Skip hidden files
+                if filename.startswith('.'):
+                    continue
+                    
+                _, ext = os.path.splitext(filename)
+                if ext.lower() not in SUPPORTED_EXTENSIONS:
+                    skipped += 1
+                    continue
+                
+                total_files += 1
+                file_path = os.path.join(root, filename)
+                
+                # Calculate relative folder path (e.g., "Legal/Contracts")
+                rel_path = os.path.relpath(file_path, extract_dir)
+                folder_path = os.path.dirname(rel_path)
+                if folder_path == '.':
+                    folder_path = ''
+                
+                logger.info(f"Ingesting: {rel_path} (folder: {folder_path})")
+                
+                try:
+                    # Determine if image or document
+                    is_image = ext.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+                    
+                    if is_image:
+                        # Use vision analyzer
+                        from vision_analyzer import analyze_image
+                        
+                        with open(file_path, "rb") as img_f:
+                            raw = img_f.read()
+                        
+                        result = await asyncio.to_thread(analyze_image, raw)
+                        
+                        # Create markdown from vision
+                        markdown_text = f"# {filename}\n\n**Image Type:** {result.image_type}\n\n## Analysis\n\n{result.description}"
+                        
+                        # Save markdown
+                        perm_dir = os.path.join(os.getenv("UPLOAD_DIR", "./data/uploads"), workspace_id)
+                        os.makedirs(perm_dir, exist_ok=True)
+                        
+                        file_id = str(uuid.uuid4())
+                        perm_img_path = os.path.join(perm_dir, f"{file_id}_{filename}")
+                        shutil.copy(file_path, perm_img_path)
+                        
+                        perm_md_path = perm_img_path + ".md"
+                        with open(perm_md_path, "w", encoding="utf-8") as md_f:
+                            md_f.write(markdown_text)
+                        
+                        doc_id = await engine.ingest_text_file(
+                            path=perm_md_path,
+                            title=filename,
+                            source=source,
+                            workspace_id=workspace_id,
+                            uri=perm_img_path,
+                            folder_path=folder_path
+                        )
+                    else:
+                        # Copy to persistent storage
+                        perm_dir = os.path.join(os.getenv("UPLOAD_DIR", "./data/uploads"), workspace_id)
+                        os.makedirs(perm_dir, exist_ok=True)
+                        
+                        file_id = str(uuid.uuid4())
+                        perm_path = os.path.join(perm_dir, f"{file_id}_{filename}")
+                        shutil.copy(file_path, perm_path)
+                        
+                        # Extract text based on file type
+                        if ext.lower() == '.txt' or ext.lower() == '.md':
+                            with open(perm_path, "r", encoding="utf-8") as txt_f:
+                                extracted_text = txt_f.read()
+                        elif ext.lower() == '.pdf':
+                            import pdf_extractor
+                            result = await asyncio.to_thread(
+                                pdf_extractor.extract_pdf,
+                                perm_path,
+                                title=filename,
+                                enable_ocr=enable_ocr,
+                                enable_vision=enable_vision
+                            )
+                            extracted_text = result.text
+                        else:
+                            # Use Docling for other formats
+                            extractor = get_docling_extractor(enable_ocr=enable_ocr)
+                            kind = filetype.guess(perm_path)
+                            guessed_mime = kind.mime if kind else None
+                            
+                            extracted = await asyncio.to_thread(
+                                extractor.extract,
+                                perm_path,
+                                title=filename,
+                                mime=guessed_mime
+                            )
+                            extracted_text = extracted.text
+                        
+                        # Save extracted markdown
+                        perm_md_path = perm_path + ".md"
+                        with open(perm_md_path, "w", encoding="utf-8") as md_f:
+                            md_f.write(extracted_text)
+                        
+                        # Ingest
+                        doc_id = await engine.ingest_text_file(
+                            path=perm_md_path,
+                            title=filename,
+                            source=source,
+                            workspace_id=workspace_id,
+                            uri=perm_path,
+                            folder_path=folder_path
+                        )
+                    
+                    doc_ids.append(doc_id)
+                    ingested += 1
+                    
+                except Exception as e:
+                    error_msg = f"{rel_path}: {str(e)}"
+                    logger.error(f"Failed to ingest {rel_path}: {e}")
+                    errors.append(error_msg)
+        
+        return ZipIngestResponse(
+            status="ok",
+            total_files=total_files,
+            ingested=ingested,
+            skipped=skipped,
+            errors=errors[:10],  # Limit errors in response
+            doc_ids=doc_ids
+        )
+        
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file.")
+    except Exception as e:
+        logger.error(f"ZIP ingestion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Cleanup temp directory
+        shutil.rmtree(temp_zip_dir, ignore_errors=True)
 
 
 @app.post("/ingest/any/stream")

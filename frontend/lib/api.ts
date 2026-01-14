@@ -82,3 +82,34 @@ export const getDocContent = async (docId: string, workspaceId: string): Promise
     });
     return res.data;
 };
+
+export interface ZipIngestResult {
+    status: string;
+    total_files: number;
+    ingested: number;
+    skipped: number;
+    errors: string[];
+    doc_ids: string[];
+}
+
+export const ingestZip = async (
+    file: File,
+    workspaceId: string,
+    options?: { enableOcr?: boolean; enableVision?: boolean }
+): Promise<ZipIngestResult> => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const params: any = {
+        workspace_id: workspaceId,
+        enable_ocr: options?.enableOcr || false,
+        enable_vision: options?.enableVision || false
+    };
+
+    const res = await api.post("/ingest/zip", formData, {
+        params,
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 600000, // 10 minute timeout for large ZIPs
+    });
+    return res.data;
+};

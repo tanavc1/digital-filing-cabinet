@@ -2,7 +2,7 @@
 
 import { Doc } from "@/lib/types";
 import { deleteDoc } from "@/lib/api";
-import { Trash2, FileText, Eye } from "lucide-react";
+import { Trash2, FileText, Eye, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Table,
@@ -46,6 +46,7 @@ export function DocTable({ docs, onDelete }: DocTableProps) {
                 <TableHeader>
                     <TableRow>
                         <TableHead>Document</TableHead>
+                        <TableHead>Folder</TableHead>
                         <TableHead>Source</TableHead>
                         <TableHead>Modified</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -59,6 +60,18 @@ export function DocTable({ docs, onDelete }: DocTableProps) {
                                     <FileText className="w-4 h-4 text-blue-500" />
                                     {doc.title}
                                 </div>
+                            </TableCell>
+                            <TableCell className="text-gray-500">
+                                {doc.folder_path ? (
+                                    <div className="flex items-center gap-1 text-sm">
+                                        <FolderOpen className="w-3 h-3 text-amber-500" />
+                                        <span className="truncate max-w-[200px]" title={doc.folder_path}>
+                                            {doc.folder_path}
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <span className="text-gray-300">—</span>
+                                )}
                             </TableCell>
                             <TableCell className="text-gray-500">{doc.source}</TableCell>
                             <TableCell className="text-gray-500">

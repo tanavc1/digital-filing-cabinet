@@ -1167,6 +1167,7 @@ class RAGEngine:
         source: str = "local",
         workspace_id: Optional[str] = None,
         uri: Optional[str] = None,
+        folder_path: Optional[str] = None,
         progress_callback: Optional[callable] = None,
     ) -> str:
         workspace_id = normalize_workspace_id(workspace_id)
@@ -1227,6 +1228,7 @@ class RAGEngine:
                 "workspace_id": workspace_id,
                 "source": source,
                 "uri": uri or os.path.abspath(path),
+                "folder_path": folder_path or "",
                 "title": title_final,
                 "chunk_index": int(c["chunk_index"]),
                 "start_char": int(c["start_char"]),
@@ -1243,6 +1245,7 @@ class RAGEngine:
             "workspace_id": workspace_id,
             "source": source,
             "uri": uri or os.path.abspath(path),
+            "folder_path": folder_path or "",
             "title": title_final,
             "created_at": now_ts(),
             "modified_at": int(os.path.getmtime(path)),
