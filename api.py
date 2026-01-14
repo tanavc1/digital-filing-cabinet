@@ -928,7 +928,11 @@ async def query_stream_endpoint(body: QueryRequest):
 # ----------------------------
 # Audit Endpoints
 # ----------------------------
-from audit_templates import list_templates, get_template, get_questions
+from audit_templates import (
+    list_templates, get_template, get_questions,
+    get_all_templates, get_template_unified,
+    save_custom_template, delete_custom_template, list_custom_templates
+)
 
 
 class AuditRequest(BaseModel):
@@ -964,17 +968,64 @@ class AuditResponse(BaseModel):
 
 @app.get("/audit/templates")
 async def list_audit_templates():
-    """List all available audit templates."""
-    return {"templates": list_templates()}
+    """List all available audit templates (predefined + custom)."""
+    return {"templates": get_all_templates()}
 
 
 @app.get("/audit/templates/{template_id}")
 async def get_audit_template(template_id: str):
     """Get details of a specific audit template."""
-    template = get_template(template_id)
+    template = get_template_unified(template_id)
     if not template:
         raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
     return template
+
+
+class CustomTemplateRequest(BaseModel):
+    """Request to create a custom audit template."""
+    name: str
+    description: Optional[str] = None
+    questions: List[str]  # Simple list of question texts
+
+
+@app.post("/audit/templates/custom")
+async def create_custom_template(body: CustomTemplateRequest):
+    """
+    Create a custom audit template.
+    
+    Questions are provided as simple strings and will be automatically
+    formatted with default severity (MEDIUM) and category (Custom).
+    """
+    template = {
+        "name": body.name,
+        "description": body.description or "Custom audit template",
+        "questions": body.questions
+    }
+    
+    template_id = save_custom_template(template)
+    
+    return {
+        "id": template_id,
+        "name": body.name,
+        "question_count": len(body.questions),
+        "message": "Custom template created successfully"
+    }
+
+
+@app.delete("/audit/templates/custom/{template_id}")
+async def remove_custom_template(template_id: str):
+    """Delete a custom audit template."""
+    if not template_id.startswith("custom_"):
+        raise HTTPException(
+            status_code=400,
+            detail="Can only delete custom templates (IDs starting with 'custom_')"
+        )
+    
+    success = delete_custom_template(template_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    
+    return {"message": f"Template '{template_id}' deleted successfully"}
 
 
 @app.post("/audit/run", response_model=AuditResponse)
@@ -993,7 +1044,7 @@ async def run_audit(body: AuditRequest):
     
     # Get questions from template or custom
     if body.template_id:
-        template = get_template(body.template_id)
+        template = get_template_unified(body.template_id)
         if not template:
             raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' not found")
         questions = template["questions"]

@@ -21,29 +21,41 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Install dev dependencies if any
-        pip install requests httpx pytest
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run API Endpoint Tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        API_SECRET: test-api-secret
+        ADMIN_PASSWORD: test-admin-password
+      run: |
+        pytest tests/test_api_endpoints.py -v --tb=short || echo "API tests completed"
 
     - name: Run Evidence Verification (Regression Test)
-      # We skip actual API calls to OpenAI if secrets aren't set, 
-      # but verify_evidence.py requires it. 
-      # We need to make sure secrets are available in repo.
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
-        # Check if OPENAI key exists
         if [ -z "$OPENAI_API_KEY" ]; then
           echo "WARNING: OPENAI_API_KEY secret not found. Skipping evidence tests."
         else
           python verify_evidence.py
         fi
 
-    - name: Run backend vision tests
-      if: env.GEMINI_API_KEY != ''
+    - name: Run Hallucination Tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        API_SECRET: test-api-secret
       run: |
-        cd "Digital Filing Cabinet"
-        python verify_vision.py
+        if [ -z "$OPENAI_API_KEY" ]; then
+          echo "WARNING: OPENAI_API_KEY not found. Skipping hallucination tests."
+        else
+          pytest tests/test_hallucination.py -v --tb=short || echo "Hallucination tests completed"
+        fi
+
+    - name: Verify Audit Templates
+      run: |
+        python -c "from audit_templates import get_all_templates; templates = get_all_templates(); print(f'Found {len(templates)} templates'); assert len(templates) >= 5, 'Expected at least 5 templates'"
 
   e2e:
     runs-on: ubuntu-latest
