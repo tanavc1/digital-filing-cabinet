@@ -39,9 +39,28 @@ jobs:
           python verify_evidence.py
         fi
 
-        # Check if GEMINI key exists for Vision tests
-        if [ -z "$GEMINI_API_KEY" ]; then
-          echo "WARNING: GEMINI_API_KEY secret not found. Skipping vision tests."
-        else
-          python verify_vision.py
-        fi
+    - name: Run backend vision tests
+      if: env.GEMINI_API_KEY != ''
+      run: |
+        cd "Digital Filing Cabinet"
+        python verify_vision.py
+
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      - name: Run Playwright tests
+        run: npx playwright test
+        env:
+          ADMIN_PASSWORD: admin
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
