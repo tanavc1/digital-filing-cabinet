@@ -1563,7 +1563,8 @@ class RAGEngine:
         self, 
         question: str, 
         workspace_id: Optional[str] = None,
-        doc_ids: Optional[List[str]] = None
+        doc_ids: Optional[List[str]] = None,
+        folder_path: Optional[str] = None
     ) -> List[Dict]:
         """
         Helper: Parallel retrieval + RRF Fusion + Reranking + Score Filtering.
@@ -1651,6 +1652,14 @@ class RAGEngine:
                 candidate_map[r["chunk_id"]] = dict(r)
 
         fused_candidates = [candidate_map[cid] for cid in fused_id_set if cid in candidate_map]
+        
+        # Apply folder_path filter if specified
+        if folder_path:
+            fused_candidates = [
+                c for c in fused_candidates 
+                if c.get("folder_path", "").startswith(folder_path)
+            ]
+            logger.info(f"After folder filter ({folder_path}): {len(fused_candidates)}")
         
         logger.info(f"Fused candidates: {len(fused_candidates)}")
 
@@ -1911,9 +1920,10 @@ class RAGEngine:
             "abstained": False,
         }
 
-    async def query_stream(self, question: str, workspace_id: Optional[str] = None, messages: Optional[List[Dict]] = None):
+    async def query_stream(self, question: str, workspace_id: Optional[str] = None, messages: Optional[List[Dict]] = None, folder_path: Optional[str] = None):
         """
         Generator that yields SSE events: status updates, sources, and answer tokens.
+        Optionally filter by folder_path.
         """
         workspace_id = normalize_workspace_id(workspace_id)
         
@@ -1929,7 +1939,7 @@ class RAGEngine:
         # 1. Update Status: Retrieval
         yield {"type": "status", "msg": f"Searching: {question}"}
         
-        candidates = await self._retrieve_candidates(question, workspace_id)
+        candidates = await self._retrieve_candidates(question, workspace_id, folder_path=folder_path)
         if not candidates:
             yield {"type": "status", "msg": "No relevant documents found."}
             yield {"type": "abstained", "explanation": "No matching documents found in workspace."}

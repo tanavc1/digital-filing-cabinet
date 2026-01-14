@@ -5,10 +5,11 @@ import { useWorkspace } from "@/components/providers/workspace-provider";
 import { AnswerBlock } from "@/components/query/answer-block";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Search, ArrowUp, Square } from "lucide-react";
 import { useQueryStream } from "@/hooks/use-query-stream";
 import { ScopeSelector } from "@/components/scope-selector";
 import { QueryHistory, addQueryToHistory } from "@/components/query/query-history";
+import { FolderFilter } from "@/components/folder-filter";
 
 export default function SearchPage() {
   // Hooks
@@ -30,6 +31,7 @@ export default function SearchPage() {
 
   // Local State
   const [query, setQuery] = useState("");
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom
@@ -42,15 +44,11 @@ export default function SearchPage() {
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
-
-    // Save to history
     addQueryToHistory(query, selectedWorkspace);
-
-    await startStream(query, selectedWorkspace);
+    await startStream(query, selectedWorkspace, selectedFolder);
     setQuery("");
   };
 
-  // Helper to format message for AnswerBlock
   const getResultForMessage = (msg: any) => ({
     answer: msg.content,
     sources: msg.sources || [],
@@ -73,6 +71,11 @@ export default function SearchPage() {
         </div>
 
         <div className="flex items-center gap-4">
+          <FolderFilter
+            docs={docs}
+            selectedFolder={selectedFolder}
+            onSelect={setSelectedFolder}
+          />
           <ScopeSelector
             workspaces={workspaces}
             selectedWorkspace={selectedWorkspace}
@@ -127,7 +130,6 @@ export default function SearchPage() {
                     docs={docs}
                     statusMessage={msg.statusMessage}
                     isStreaming={msg.isStreaming}
-                    // Only show visual typing for the VERY LAST message if it's strictly the active one
                     isTyping={idx === messages.length - 1 && isTyping}
                   />
                 </div>
@@ -142,10 +144,9 @@ export default function SearchPage() {
       {/* Input Footer */}
       <div className="bg-white border-t p-4 flex-shrink-0 z-20">
         <div className="max-w-3xl mx-auto">
-          <form onSubmit={handleSearch} className="relative shadow-lg rounded-xl overflow-hidden border border-gray-200 focus-within:ring-2 ring-blue-500/20 transition-all">
-            <Search className="absolute left-4 top-4 h-5 w-5 text-gray-400" />
+          <form onSubmit={handleSearch} className="relative shadow-lg rounded-2xl overflow-hidden border border-gray-200 focus-within:ring-2 ring-blue-500/20 transition-all bg-white">
             <textarea
-              className="w-full pl-12 pr-24 py-4 text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px]"
+              className="w-full pl-5 pr-14 py-[14px] text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px] placeholder:text-gray-400"
               placeholder={`Message ${selectedWorkspace}...`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -168,30 +169,34 @@ export default function SearchPage() {
                 target.style.height = Math.min(target.scrollHeight, 200) + 'px';
               }}
             />
-            <div className="absolute right-2 bottom-2">
+            <div className="absolute right-2 bottom-[10px]">
               {isStreaming ? (
                 <Button
                   type="button"
-                  onClick={reset} // TODO: Proper cancel
+                  onClick={reset}
                   variant="ghost"
-                  size="sm"
-                  className="h-10 px-4 text-red-500 hover:text-red-700 hover:bg-red-50 font-medium"
+                  size="icon"
+                  className="h-9 w-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-900 transition-all"
                 >
-                  Stop
+                  <Square className="h-4 w-4 fill-current" />
                 </Button>
               ) : (
                 <Button
                   type="submit"
                   disabled={!query.trim()}
-                  className="h-10 px-6 bg-gray-900 hover:bg-black text-white rounded-lg transition-all"
+                  size="icon"
+                  className={`h-9 w-9 rounded-lg transition-all shadow-sm ${query.trim()
+                    ? "bg-blue-600 hover:bg-blue-700 text-white"
+                    : "bg-gray-100 text-gray-300 cursor-not-allowed"
+                    }`}
                 >
-                  Send
+                  <ArrowUp className="h-5 w-5" />
                 </Button>
               )}
             </div>
           </form>
           <div className="text-center mt-3">
-            <span className="text-[10px] text-gray-400 uppercase tracking-widest">
+            <span className="text-[10px] text-gray-400 uppercase tracking-widest font-medium">
               Context Aware • {selectedWorkspace}
             </span>
           </div>

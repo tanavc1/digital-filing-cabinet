@@ -37,7 +37,7 @@ export interface ChatMessage {
 interface UseQueryStreamResult {
     messages: ChatMessage[];
     streamStatus: StreamStatus;
-    startStream: (q: string, workspaceId: string) => Promise<void>;
+    startStream: (q: string, workspaceId: string, folderPath?: string | null) => Promise<void>;
     reset: () => void;
     isTyping: boolean;
 }
@@ -100,7 +100,7 @@ export function useQueryStream(): UseQueryStreamResult {
         }, 20);
     }, []);
 
-    const startStream = useCallback(async (q: string, workspaceId: string) => {
+    const startStream = useCallback(async (q: string, workspaceId: string, folderPath?: string | null) => {
         const streamId = Date.now();
         activeStreamId.current = streamId;
         streamDoneRef.current = false;
@@ -156,6 +156,7 @@ export function useQueryStream(): UseQueryStreamResult {
                 body: JSON.stringify({
                     q,
                     workspace_id: workspaceId,
+                    folder_path: folderPath || null,
                     messages: historyToSend
                 }),
                 signal: controller.signal,

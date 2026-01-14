@@ -173,6 +173,7 @@ class QueryRequest(BaseModel):
     workspace_id: Optional[str] = "default"
     doc_id: Optional[str] = None
     doc_ids: Optional[List[str]] = None
+    folder_path: Optional[str] = None  # Filter by folder (e.g., "Legal/Contracts")
     messages: Optional[List[Dict]] = None # History support
 
 
@@ -899,7 +900,7 @@ async def query_stream_endpoint(body: QueryRequest):
     
     async def event_generator():
         try:
-            async for event in engine.query_stream(body.q, body.workspace_id, body.messages):
+            async for event in engine.query_stream(body.q, body.workspace_id, body.messages, folder_path=body.folder_path):
                 # Ensure SourceOut serialization if type is sources
                 if event["type"] == "sources":
                     mapped_sources = []
