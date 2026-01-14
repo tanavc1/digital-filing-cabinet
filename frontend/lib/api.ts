@@ -175,3 +175,52 @@ export const runAudit = async (
     });
     return res.data;
 };
+
+// ----------------------------
+// Document Comparison API
+// ----------------------------
+
+export interface DifferenceItem {
+    category: string;
+    description: string;
+    severity: "HIGH" | "MEDIUM" | "LOW";
+    original_text?: string;
+    revised_text?: string;
+}
+
+export interface DocumentInfo {
+    doc_id: string;
+    title: string;
+    chunk_count: number;
+}
+
+export interface CompareStats {
+    total_changes: number;
+    high_severity: number;
+    medium_severity: number;
+    low_severity: number;
+}
+
+export interface CompareResult {
+    doc_a: DocumentInfo;
+    doc_b: DocumentInfo;
+    differences: DifferenceItem[];
+    summary: string;
+    stats: CompareStats;
+    error?: string;
+}
+
+export const compareDocuments = async (
+    docIdA: string,
+    docIdB: string,
+    workspaceId: string
+): Promise<CompareResult> => {
+    const res = await api.post("/compare", {
+        doc_id_a: docIdA,
+        doc_id_b: docIdB,
+        workspace_id: workspaceId
+    }, {
+        timeout: 120000  // 2 minute timeout for comparison
+    });
+    return res.data;
+};

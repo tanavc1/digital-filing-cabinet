@@ -1011,6 +1011,25 @@ async def run_audit(body: AuditRequest):
     
     logger.info(f"Running audit '{audit_id}' with {len(questions)} questions on folder '{body.folder_path}'")
     
+    # Pre-check: Verify documents exist in the target scope
+    try:
+        all_docs = engine.list_documents(workspace_id=body.workspace_id)
+        if body.folder_path:
+            scoped_docs = [d for d in all_docs if d.get("folder_path", "").startswith(body.folder_path)]
+        else:
+            scoped_docs = all_docs
+        
+        if not scoped_docs:
+            return AuditResponse(
+                audit_id=audit_id,
+                template_name=template_name,
+                folder_path=body.folder_path,
+                findings=[],
+                summary={"found": 0, "not_found": 0, "unclear": 0, "errors": 0, "high_risk": 0}
+            )
+    except Exception as e:
+        logger.warning(f"Could not pre-check documents: {e}")
+    
     try:
         findings = await engine.run_audit(
             questions=questions,
@@ -1037,6 +1056,86 @@ async def run_audit(body: AuditRequest):
         
     except Exception as e:
         logger.error(f"Audit failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------------------------
+# Document Comparison Endpoints
+# ----------------------------
+
+class CompareRequest(BaseModel):
+    """Request to compare two documents."""
+    doc_id_a: str  # Original document
+    doc_id_b: str  # Revised document
+    workspace_id: str = "default"
+
+
+class DifferenceItem(BaseModel):
+    """A single difference found between documents."""
+    category: str
+    description: str
+    severity: str  # HIGH, MEDIUM, LOW
+    original_text: Optional[str] = None
+    revised_text: Optional[str] = None
+
+
+class DocumentInfo(BaseModel):
+    """Document metadata for comparison result."""
+    doc_id: str
+    title: str
+    chunk_count: int
+
+
+class CompareStats(BaseModel):
+    """Statistics about the comparison."""
+    total_changes: int
+    high_severity: int
+    medium_severity: int
+    low_severity: int
+
+
+class CompareResponse(BaseModel):
+    """Response from document comparison."""
+    doc_a: DocumentInfo
+    doc_b: DocumentInfo
+    differences: List[DifferenceItem]
+    summary: str
+    stats: CompareStats
+    error: Optional[str] = None
+
+
+@app.post("/compare", response_model=CompareResponse)
+async def compare_documents(body: CompareRequest):
+    """
+    Compare two documents and identify material differences.
+    
+    Uses semantic analysis to find substantive changes, ignoring
+    formatting and minor wording differences.
+    """
+    engine = get_engine()
+    
+    logger.info(f"Comparing documents: {body.doc_id_a} vs {body.doc_id_b}")
+    
+    try:
+        result = await engine.compare_documents(
+            doc_id_a=body.doc_id_a,
+            doc_id_b=body.doc_id_b,
+            workspace_id=body.workspace_id
+        )
+        
+        return CompareResponse(
+            doc_a=DocumentInfo(**result["doc_a"]),
+            doc_b=DocumentInfo(**result["doc_b"]),
+            differences=[DifferenceItem(**d) for d in result.get("differences", [])],
+            summary=result.get("summary", ""),
+            stats=CompareStats(**result.get("stats", {"total_changes": 0, "high_severity": 0, "medium_severity": 0, "low_severity": 0})),
+            error=result.get("error")
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Comparison failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

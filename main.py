@@ -729,6 +729,42 @@ class LanceStore:
         candidates.sort(key=lambda x: x["chunk_index"])
         return candidates
 
+    def get_chunks_by_doc_id(self, workspace_id: str, doc_id: str) -> List[Dict]:
+        """
+        Get all chunks for a specific document, ordered by chunk_index.
+        Used for document comparison and full-text retrieval.
+        """
+        try:
+            table = self.db.open_table("chunks")
+        except Exception:
+            return []
+        
+        rows = table.to_arrow().to_pylist()
+        chunks = []
+        
+        for r in rows:
+            if _row_workspace_id(r) != workspace_id:
+                continue
+            if r.get("doc_id") != doc_id:
+                continue
+            chunks.append({
+                "chunk_id": r["chunk_id"],
+                "doc_id": r["doc_id"],
+                "workspace_id": _row_workspace_id(r),
+                "chunk_index": r["chunk_index"],
+                "start_char": r["start_char"],
+                "end_char": r["end_char"],
+                "text": r["text"],
+                "chunk_type": r.get("chunk_type", "discussion"),
+            })
+        
+        chunks.sort(key=lambda x: x["chunk_index"])
+        return chunks
+
+    def get_document(self, workspace_id: str, doc_id: str) -> Optional[Dict]:
+        """Alias for fetch_document for convenience."""
+        return self.fetch_document(workspace_id, doc_id)
+
 
 # ----------------------------
 # BM25 persistence
@@ -2132,6 +2168,146 @@ class RAGEngine:
         findings = await asyncio.gather(*tasks)
         
         return list(findings)
+
+    async def compare_documents(
+        self,
+        doc_id_a: str,
+        doc_id_b: str,
+        workspace_id: str
+    ) -> Dict[str, Any]:
+        """
+        Compare two documents and identify material differences.
+        
+        Uses semantic alignment to match similar sections, then uses LLM
+        to identify substantive changes (not just formatting differences).
+        
+        Args:
+            doc_id_a: First document ID (typically the "original")
+            doc_id_b: Second document ID (typically the "revised")
+            workspace_id: Workspace containing both documents
+            
+        Returns:
+            Dict with document info and list of differences
+        """
+        workspace_id = normalize_workspace_id(workspace_id)
+        
+        # 1. Fetch all chunks for both documents
+        chunks_a = self.store.get_chunks_by_doc_id(workspace_id, doc_id_a)
+        chunks_b = self.store.get_chunks_by_doc_id(workspace_id, doc_id_b)
+        
+        if not chunks_a:
+            raise ValueError(f"Document A ({doc_id_a}) not found or has no content")
+        if not chunks_b:
+            raise ValueError(f"Document B ({doc_id_b}) not found or has no content")
+        
+        # Get document metadata
+        doc_a = self.store.get_document(workspace_id, doc_id_a)
+        doc_b = self.store.get_document(workspace_id, doc_id_b)
+        
+        # 2. Combine chunks into full text for each document
+        text_a = "\n\n".join([c["text"] for c in chunks_a])
+        text_b = "\n\n".join([c["text"] for c in chunks_b])
+        
+        # 3. Use LLM to identify material differences
+        comparison_prompt = f"""You are a legal analyst comparing two versions of a document.
+
+DOCUMENT A (Original):
+---
+{text_a[:15000]}
+---
+
+DOCUMENT B (Revised):
+---
+{text_b[:15000]}
+---
+
+Identify all MATERIAL differences between these documents. Focus on:
+- Changes to legal terms, obligations, or rights
+- Modified amounts, dates, or deadlines
+- Added or removed clauses
+- Changes to definitions
+- Modified conditions or requirements
+
+Ignore:
+- Formatting or style changes
+- Minor wording changes that don't affect meaning
+- Typo corrections
+
+For each difference, provide:
+1. Category (e.g., "Financial Terms", "Termination", "Liability", "Definitions")
+2. A clear description of what changed
+3. Severity: HIGH (materially affects deal), MEDIUM (notable change), LOW (minor adjustment)
+4. The original text snippet (brief)
+5. The revised text snippet (brief)
+
+Respond in JSON format:
+{{
+    "differences": [
+        {{
+            "category": "string",
+            "description": "string",
+            "severity": "HIGH" | "MEDIUM" | "LOW",
+            "original_text": "string (brief excerpt)",
+            "revised_text": "string (brief excerpt)"
+        }}
+    ],
+    "summary": "1-2 sentence summary of the overall changes"
+}}
+
+If the documents are substantially identical, return an empty differences array.
+Respond with ONLY valid JSON, no other text."""
+
+        try:
+            response = await self.llm.client.chat.completions.create(
+                model=self.llm.model_id,
+                messages=[{"role": "user", "content": comparison_prompt}],
+                temperature=0.1,
+                max_tokens=4000
+            )
+            
+            result_text = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
+            import json
+            # Handle potential markdown code blocks
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            
+            comparison_result = json.loads(result_text)
+            
+            return {
+                "doc_a": {
+                    "doc_id": doc_id_a,
+                    "title": doc_a.get("title", "Document A") if doc_a else "Document A",
+                    "chunk_count": len(chunks_a)
+                },
+                "doc_b": {
+                    "doc_id": doc_id_b,
+                    "title": doc_b.get("title", "Document B") if doc_b else "Document B",
+                    "chunk_count": len(chunks_b)
+                },
+                "differences": comparison_result.get("differences", []),
+                "summary": comparison_result.get("summary", "No summary available"),
+                "stats": {
+                    "total_changes": len(comparison_result.get("differences", [])),
+                    "high_severity": sum(1 for d in comparison_result.get("differences", []) if d.get("severity") == "HIGH"),
+                    "medium_severity": sum(1 for d in comparison_result.get("differences", []) if d.get("severity") == "MEDIUM"),
+                    "low_severity": sum(1 for d in comparison_result.get("differences", []) if d.get("severity") == "LOW")
+                }
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse comparison result: {e}")
+            return {
+                "doc_a": {"doc_id": doc_id_a, "title": "Document A", "chunk_count": len(chunks_a)},
+                "doc_b": {"doc_id": doc_id_b, "title": "Document B", "chunk_count": len(chunks_b)},
+                "differences": [],
+                "summary": "Comparison failed: Could not parse LLM response",
+                "stats": {"total_changes": 0, "high_severity": 0, "medium_severity": 0, "low_severity": 0},
+                "error": str(e)
+            }
 
 
 
