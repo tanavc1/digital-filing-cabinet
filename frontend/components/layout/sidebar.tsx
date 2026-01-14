@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Search, Files, Building, ShieldCheck } from "lucide-react";
+import { Search, Files, Building, ShieldCheck, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "../providers/workspace-provider";
 import {
@@ -25,6 +25,7 @@ export function Sidebar() {
     const navItems = [
         { href: "/", label: "Search", icon: Search },
         { href: "/documents", label: "Documents", icon: Files, count: docs?.length },
+        { href: "/audit", label: "Audit", icon: Shield },
     ];
 
     return (

@@ -2030,6 +2030,108 @@ class RAGEngine:
              
         yield {"type": "done"}
 
+    async def run_audit(
+        self,
+        questions: List[Dict[str, Any]],
+        workspace_id: str,
+        folder_path: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Run an audit by executing multiple questions in parallel.
+        
+        Args:
+            questions: List of question dicts with 'text', 'severity', 'category'
+            workspace_id: Target workspace
+            folder_path: Optional folder filter
+            
+        Returns:
+            List of findings with answer, status, severity, and citations
+        """
+        workspace_id = normalize_workspace_id(workspace_id)
+        
+        async def run_single_question(q_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Run a single audit question and return finding."""
+            question_text = q_data["text"]
+            severity = q_data.get("severity", "MEDIUM")
+            category = q_data.get("category", "General")
+            
+            try:
+                # Use existing retrieval with folder filter
+                candidates = await self._retrieve_candidates(
+                    question_text, 
+                    workspace_id, 
+                    folder_path=folder_path
+                )
+                
+                if not candidates:
+                    return {
+                        "question": question_text,
+                        "answer": "No relevant information found in the selected documents.",
+                        "status": "NOT_FOUND",
+                        "severity": severity,
+                        "category": category,
+                        "citations": []
+                    }
+                
+                # Extract evidence
+                extraction_result = await self._extract_evidence_batched(question_text, candidates)
+                verified_evidence = extraction_result.get("verified_evidence", [])
+                
+                if not verified_evidence:
+                    return {
+                        "question": question_text,
+                        "answer": "Documents found but no specific answer could be extracted.",
+                        "status": "UNCLEAR",
+                        "severity": severity,
+                        "category": category,
+                        "citations": []
+                    }
+                
+                # Merge and format
+                verified_evidence = self._merge_adjacent_evidence(verified_evidence)
+                verified_dicts = [e.dict() for e in verified_evidence]
+                
+                # Generate concise answer (non-streaming)
+                answer_tokens = []
+                async for token in self.llm.synthesize_answer_stream(question_text, verified_dicts):
+                    answer_tokens.append(token)
+                answer_text = "".join(answer_tokens)
+                
+                # Format citations
+                citations = [
+                    {
+                        "doc_id": e["doc_id"],
+                        "quote": e.get("quote", "")[:200],  # Truncate for audit table
+                        "chunk_id": e.get("chunk_id")
+                    }
+                    for e in verified_dicts[:3]  # Limit to top 3 citations
+                ]
+                
+                return {
+                    "question": question_text,
+                    "answer": answer_text,
+                    "status": "FOUND",
+                    "severity": severity,
+                    "category": category,
+                    "citations": citations
+                }
+                
+            except Exception as e:
+                logger.error(f"Audit question failed: {question_text[:50]}... - {e}")
+                return {
+                    "question": question_text,
+                    "answer": f"Error processing question: {str(e)}",
+                    "status": "ERROR",
+                    "severity": severity,
+                    "category": category,
+                    "citations": []
+                }
+        
+        # Run all questions in parallel
+        tasks = [run_single_question(q) for q in questions]
+        findings = await asyncio.gather(*tasks)
+        
+        return list(findings)
 
 
 

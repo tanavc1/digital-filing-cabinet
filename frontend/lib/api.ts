@@ -113,3 +113,65 @@ export const ingestZip = async (
     });
     return res.data;
 };
+
+// ----------------------------
+// Audit API
+// ----------------------------
+
+export interface AuditTemplate {
+    id: string;
+    name: string;
+    description: string;
+    question_count: number;
+}
+
+export interface AuditCitation {
+    doc_id: string;
+    quote: string;
+    chunk_id?: string;
+}
+
+export interface AuditFinding {
+    question: string;
+    answer: string;
+    status: "FOUND" | "NOT_FOUND" | "UNCLEAR" | "ERROR";
+    severity: "HIGH" | "MEDIUM" | "LOW" | "INFO";
+    category: string;
+    citations: AuditCitation[];
+}
+
+export interface AuditResult {
+    audit_id: string;
+    template_name?: string;
+    folder_path?: string;
+    findings: AuditFinding[];
+    summary: {
+        found: number;
+        not_found: number;
+        unclear: number;
+        errors: number;
+        high_risk: number;
+    };
+}
+
+export const listAuditTemplates = async (): Promise<AuditTemplate[]> => {
+    const res = await api.get("/audit/templates");
+    return res.data.templates || [];
+};
+
+export const runAudit = async (
+    workspaceId: string,
+    templateId?: string,
+    folderPath?: string | null,
+    customQuestions?: string[]
+): Promise<AuditResult> => {
+    const res = await api.post("/audit/run", {
+        workspace_id: workspaceId,
+        template_id: templateId,
+        folder_path: folderPath || null,
+        custom_questions: customQuestions
+    }, {
+        timeout: 300000  // 5 minute timeout for large audits
+    });
+    return res.data;
+};

@@ -925,5 +925,120 @@ async def query_stream_endpoint(body: QueryRequest):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+# ----------------------------
+# Audit Endpoints
+# ----------------------------
+from audit_templates import list_templates, get_template, get_questions
+
+
+class AuditRequest(BaseModel):
+    """Request to run an audit."""
+    workspace_id: str = "default"
+    folder_path: Optional[str] = None
+    template_id: Optional[str] = None  # Use predefined template
+    custom_questions: Optional[List[str]] = None  # Or provide custom questions
+
+
+class AuditCitation(BaseModel):
+    doc_id: str
+    quote: str
+    chunk_id: Optional[str] = None
+
+
+class AuditFinding(BaseModel):
+    question: str
+    answer: str
+    status: str  # FOUND, NOT_FOUND, UNCLEAR, ERROR
+    severity: str  # HIGH, MEDIUM, LOW, INFO
+    category: str
+    citations: List[AuditCitation] = []
+
+
+class AuditResponse(BaseModel):
+    audit_id: str
+    template_name: Optional[str] = None
+    folder_path: Optional[str] = None
+    findings: List[AuditFinding]
+    summary: Dict[str, int]  # found, not_found, unclear, high_risk
+
+
+@app.get("/audit/templates")
+async def list_audit_templates():
+    """List all available audit templates."""
+    return {"templates": list_templates()}
+
+
+@app.get("/audit/templates/{template_id}")
+async def get_audit_template(template_id: str):
+    """Get details of a specific audit template."""
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    return template
+
+
+@app.post("/audit/run", response_model=AuditResponse)
+async def run_audit(body: AuditRequest):
+    """
+    Run an automated audit against a workspace/folder.
+    
+    Either provide a template_id to use predefined questions,
+    or provide custom_questions for ad-hoc audits.
+    """
+    import uuid
+    
+    engine = get_engine()
+    audit_id = str(uuid.uuid4())[:8]
+    template_name = None
+    
+    # Get questions from template or custom
+    if body.template_id:
+        template = get_template(body.template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' not found")
+        questions = template["questions"]
+        template_name = template["name"]
+    elif body.custom_questions:
+        questions = [
+            {"text": q, "severity": "MEDIUM", "category": "Custom"}
+            for q in body.custom_questions
+        ]
+    else:
+        raise HTTPException(
+            status_code=400, 
+            detail="Must provide either template_id or custom_questions"
+        )
+    
+    logger.info(f"Running audit '{audit_id}' with {len(questions)} questions on folder '{body.folder_path}'")
+    
+    try:
+        findings = await engine.run_audit(
+            questions=questions,
+            workspace_id=body.workspace_id,
+            folder_path=body.folder_path
+        )
+        
+        # Calculate summary
+        summary = {
+            "found": sum(1 for f in findings if f["status"] == "FOUND"),
+            "not_found": sum(1 for f in findings if f["status"] == "NOT_FOUND"),
+            "unclear": sum(1 for f in findings if f["status"] == "UNCLEAR"),
+            "errors": sum(1 for f in findings if f["status"] == "ERROR"),
+            "high_risk": sum(1 for f in findings if f["status"] == "FOUND" and f["severity"] == "HIGH"),
+        }
+        
+        return AuditResponse(
+            audit_id=audit_id,
+            template_name=template_name,
+            folder_path=body.folder_path,
+            findings=[AuditFinding(**f) for f in findings],
+            summary=summary
+        )
+        
+    except Exception as e:
+        logger.error(f"Audit failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Run with:
 # uvicorn api:app --host 0.0.0.0 --port 8000
