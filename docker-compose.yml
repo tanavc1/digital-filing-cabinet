@@ -9,7 +9,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./lancedb_data:/app/lancedb_data
+      - ./data:/app/data
     environment:
       # Inject secrets from host .env
       - OPENAI_API_KEY=${OPENAI_API_KEY}
