@@ -2,13 +2,12 @@
 Vision Analyzer Module
 ======================
 
-Multi-modal image analysis using Google Gemini Flash 2.0.
-Provides:
-1. Chart/graph analysis with data extraction
-2. General image description for search indexing
-3. Advanced OCR fallback for documents
+Multi-modal image analysis with provider abstraction.
+Supports:
+1. Google Gemini Flash (cloud) - default
+2. Ollama LLaVA (local) - air-gapped environments
 
-Cost-effective: Gemini Flash is ~$0.10/1M input tokens
+Configured via VISION_PROVIDER env var: "gemini" or "ollama"
 """
 
 import os
@@ -18,17 +17,22 @@ import logging
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
-import google.generativeai as genai
+import httpx
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-GEMINI_MODEL = "gemini-2.0-flash"
 MAX_IMAGE_SIZE = 1024  # Max dimension in pixels
 MAX_IMAGES_PER_PDF = 10
 MIN_IMAGE_SIZE_BYTES = 10 * 1024  # 10KB minimum
 MIN_IMAGE_DIMENSION = 100  # 100px minimum width/height
+
+# Provider configuration
+VISION_PROVIDER = os.getenv("VISION_PROVIDER", "gemini")  # "gemini" or "ollama"
+GEMINI_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash")
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "llava:13b")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
 @dataclass
@@ -38,16 +42,38 @@ class VisionResult:
     image_type: str  # "chart", "diagram", "photo", "document", "unknown"
     data_points: Optional[Dict[str, Any]] = None
     confidence: float = 0.0
+    provider: str = "unknown"
 
 
-# Lazy-loaded Gemini client
+# Lazy-loaded clients
 _gemini_model = None
+_ollama_available = None
+
+
+def _check_ollama_vision_available() -> bool:
+    """Check if Ollama with vision model is available."""
+    global _ollama_available
+    if _ollama_available is None:
+        try:
+            import httpx
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(f"{OLLAMA_HOST}/api/tags")
+                if resp.status_code == 200:
+                    models = [m["name"] for m in resp.json().get("models", [])]
+                    _ollama_available = any("llava" in m.lower() for m in models)
+                else:
+                    _ollama_available = False
+        except Exception:
+            _ollama_available = False
+    return _ollama_available
 
 
 def get_gemini_model():
     """Initialize Gemini model lazily."""
     global _gemini_model
     if _gemini_model is None:
+        import google.generativeai as genai
+        
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env file.")
@@ -89,33 +115,10 @@ def resize_image(image_bytes: bytes, max_size: int = MAX_IMAGE_SIZE) -> bytes:
         return image_bytes
 
 
-def analyze_image(
-    image_bytes: bytes,
-    prompt: Optional[str] = None,
-    image_type_hint: Optional[str] = None
-) -> VisionResult:
-    """
-    Analyze an image using Gemini Vision.
-    
-    Args:
-        image_bytes: Raw image bytes (PNG, JPG, etc.)
-        prompt: Custom prompt override
-        image_type_hint: Hint about image type ("chart", "document", etc.)
-        
-    Returns:
-        VisionResult with description and metadata
-    """
-    try:
-        model = get_gemini_model()
-        
-        # Resize if needed
-        processed_bytes = resize_image(image_bytes)
-        
-        # Build prompt based on type
-        if prompt:
-            analysis_prompt = prompt
-        elif image_type_hint == "chart":
-            analysis_prompt = """Analyze this chart or graph image. Extract ALL information:
+def _build_vision_prompt(image_type_hint: Optional[str] = None) -> str:
+    """Build analysis prompt based on image type hint."""
+    if image_type_hint == "chart":
+        return """Analyze this chart or graph image. Extract ALL information:
 
 1. **Chart Type**: (bar, line, pie, scatter, etc.)
 2. **Title**: The chart title if visible
@@ -125,13 +128,13 @@ def analyze_image(
 6. **Key Insights**: Important observations
 
 Format as structured Markdown with clear headings."""
-        elif image_type_hint == "document":
-            analysis_prompt = """This is a scanned document or photo of a document.
+    elif image_type_hint == "document":
+        return """This is a scanned document or photo of a document.
 Extract ALL text content you can see.
 Format the output to preserve the document structure.
 Include any headers, paragraphs, tables, or lists."""
-        else:
-            analysis_prompt = """Analyze this image comprehensively:
+    else:
+        return """Analyze this image comprehensively:
 
 1. **Description**: What does this image show?
 2. **Text Content**: Any visible text (extract it fully)
@@ -140,41 +143,145 @@ Include any headers, paragraphs, tables, or lists."""
 
 Format as structured Markdown suitable for search indexing."""
 
-        # Create image part for Gemini
-        img = Image.open(io.BytesIO(processed_bytes))
+
+def _infer_image_type(description: str) -> str:
+    """Infer image type from analysis description."""
+    description_lower = description.lower()
+    if any(word in description_lower for word in ["chart", "graph", "plot", "axis"]):
+        return "chart"
+    elif any(word in description_lower for word in ["document", "page", "text", "form"]):
+        return "document"
+    elif any(word in description_lower for word in ["diagram", "flowchart", "schema"]):
+        return "diagram"
+    elif any(word in description_lower for word in ["photo", "picture", "image of"]):
+        return "photo"
+    return "unknown"
+
+
+def _analyze_image_ollama(
+    image_bytes: bytes,
+    prompt: str
+) -> VisionResult:
+    """
+    Analyze image using Ollama with LLaVA model (local).
+    """
+    try:
+        # Resize for efficiency
+        processed_bytes = resize_image(image_bytes)
         
-        # Generate content
-        response = model.generate_content([analysis_prompt, img])
+        # Encode as base64
+        b64_image = base64.b64encode(processed_bytes).decode("utf-8")
         
-        description = response.text.strip()
+        # Call Ollama
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json={
+                    "model": OLLAMA_VISION_MODEL,
+                    "prompt": prompt,
+                    "images": [b64_image],
+                    "stream": False
+                }
+            )
+            resp.raise_for_status()
+            description = resp.json()["response"].strip()
         
-        # Infer image type from response
-        image_type = "unknown"
-        description_lower = description.lower()
-        if any(word in description_lower for word in ["chart", "graph", "plot", "axis"]):
-            image_type = "chart"
-        elif any(word in description_lower for word in ["document", "page", "text", "form"]):
-            image_type = "document"
-        elif any(word in description_lower for word in ["diagram", "flowchart", "schema"]):
-            image_type = "diagram"
-        elif any(word in description_lower for word in ["photo", "picture", "image of"]):
-            image_type = "photo"
-        
-        logger.info(f"Vision analysis complete. Type: {image_type}, Length: {len(description)} chars")
+        image_type = _infer_image_type(description)
+        logger.info(f"Ollama vision analysis complete. Type: {image_type}, Length: {len(description)} chars")
         
         return VisionResult(
             description=description,
             image_type=image_type,
-            confidence=0.9  # Gemini doesn't provide confidence, assume high
+            confidence=0.85,
+            provider="ollama"
         )
         
     except Exception as e:
-        logger.error(f"Vision analysis failed: {e}")
+        logger.error(f"Ollama vision analysis failed: {e}")
         return VisionResult(
-            description=f"[Image analysis failed: {str(e)}]",
+            description=f"[Local vision analysis failed: {str(e)}]",
             image_type="error",
-            confidence=0.0
+            confidence=0.0,
+            provider="ollama"
         )
+
+
+def _analyze_image_gemini(
+    image_bytes: bytes,
+    prompt: str
+) -> VisionResult:
+    """
+    Analyze image using Google Gemini (cloud).
+    """
+    try:
+        model = get_gemini_model()
+        
+        # Resize if needed
+        processed_bytes = resize_image(image_bytes)
+        
+        # Create image for Gemini
+        img = Image.open(io.BytesIO(processed_bytes))
+        
+        # Generate content
+        response = model.generate_content([prompt, img])
+        description = response.text.strip()
+        
+        image_type = _infer_image_type(description)
+        logger.info(f"Gemini vision analysis complete. Type: {image_type}, Length: {len(description)} chars")
+        
+        return VisionResult(
+            description=description,
+            image_type=image_type,
+            confidence=0.9,
+            provider="gemini"
+        )
+        
+    except Exception as e:
+        logger.error(f"Gemini vision analysis failed: {e}")
+        return VisionResult(
+            description=f"[Cloud vision analysis failed: {str(e)}]",
+            image_type="error",
+            confidence=0.0,
+            provider="gemini"
+        )
+
+
+def analyze_image(
+    image_bytes: bytes,
+    prompt: Optional[str] = None,
+    image_type_hint: Optional[str] = None
+) -> VisionResult:
+    """
+    Analyze an image using the configured vision provider.
+    
+    Provider is determined by VISION_PROVIDER env var:
+    - "gemini" (default): Google Gemini Flash (cloud)
+    - "ollama": LLaVA via Ollama (local)
+    
+    Args:
+        image_bytes: Raw image bytes (PNG, JPG, etc.)
+        prompt: Custom prompt override
+        image_type_hint: Hint about image type ("chart", "document", etc.)
+        
+    Returns:
+        VisionResult with description and metadata
+    """
+    # Build the analysis prompt
+    analysis_prompt = prompt or _build_vision_prompt(image_type_hint)
+    
+    # Route to appropriate provider
+    provider = VISION_PROVIDER.lower().strip()
+    
+    if provider == "ollama":
+        # Use local LLaVA model
+        if _check_ollama_vision_available():
+            return _analyze_image_ollama(image_bytes, analysis_prompt)
+        else:
+            logger.warning("Ollama vision not available, falling back to Gemini")
+            provider = "gemini"
+    
+    # Default: Gemini (cloud)
+    return _analyze_image_gemini(image_bytes, analysis_prompt)
 
 
 def analyze_chart(image_bytes: bytes) -> VisionResult:
