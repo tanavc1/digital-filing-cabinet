@@ -58,7 +58,11 @@ export function UploadButton({ onUploadComplete }: { onUploadComplete: () => voi
                     );
                 }, 500);
 
-                await ingestFile(file, workspace.id);
+                // Extract folder path if active (e.g. from drag-drop or directory selection)
+                const relPath = (file as any).webkitRelativePath;
+                const folderPath = relPath ? "/" + relPath.substring(0, relPath.lastIndexOf("/")) : "/";
+
+                await ingestFile(file, workspace.id, undefined, folderPath);
 
                 clearInterval(progressInterval);
 

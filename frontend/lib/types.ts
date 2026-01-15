@@ -12,6 +12,8 @@ export interface Doc {
     uri?: string;
     folder_path?: string;
     summary_text?: string;
+    doc_type?: string;   // [NEW] e.g. "Lease", "NDA"
+    risk_level?: string; // [NEW] e.g. "High", "Clean"
 }
 
 export interface Evidence {

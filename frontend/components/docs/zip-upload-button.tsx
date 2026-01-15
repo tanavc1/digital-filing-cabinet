@@ -8,7 +8,7 @@ import { ingestZip, ZipIngestResult } from "@/lib/api";
 import { toast } from "sonner";
 
 export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => void }) {
-    const { workspace } = useWorkspace();
+    const { workspace, setUploadStatus } = useWorkspace();
     const [isProcessing, setIsProcessing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -23,6 +23,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
         }
 
         setIsProcessing(true);
+        setUploadStatus({ isUploading: true, fileName: file.name });
         toast.info(`Uploading Data Room: ${file.name}...`);
 
         try {
@@ -48,6 +49,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
             toast.error(err?.response?.data?.detail || "Failed to upload Data Room");
         } finally {
             setIsProcessing(false);
+            setUploadStatus({ isUploading: false });
             if (fileInputRef.current) fileInputRef.current.value = "";
         }
     };

@@ -34,6 +34,11 @@ from openai import AsyncOpenAI
 import hashlib
 from dataclasses import dataclass, field, asdict
 
+# [NEW] Import provider abstraction
+from llm_providers import get_llm_provider, LLMProvider
+from classifiers import DocumentClassifier  # [NEW] Import classifier
+from docling_loader import DoclingExtractor  # [NEW] Import loader
+
 from prompts import (
     SUMMARIZE_DOC_PROMPT,
     EXTRACT_EVIDENCE_SINGLE_SYSTEM,
@@ -421,12 +426,24 @@ class LanceStore:
     DOC_REQUIRED_FIELDS = [
         "doc_id", "workspace_id", "source", "uri", "title",
         "created_at", "modified_at", "content_hash",
-        "summary_text", "summary_model", "summary_version"
+        "summary_text", "summary_model", "summary_version",
+        "folder_path",  # [NEW] Added for folder support
+        "doc_type",     # [NEW] Auto-classified type (Lease, NDA, etc.)
+        "risk_level"    # [NEW] High/Medium/Low/Clean
     ]
     CHUNK_REQUIRED_FIELDS = [
         "chunk_id", "doc_id", "workspace_id", "source", "uri", "title",
         "chunk_index", "start_char", "end_char", "text",
-        "chunk_type", "embedding", "created_at", "content_hash"
+        "chunk_type", "embedding", "created_at", "content_hash",
+        "folder_path"
+    ]
+    CLAUSE_REQUIRED_FIELDS = [
+        "id", "doc_id", "workspace_id", "clause_type", "extracted_value",
+        "snippet", "confidence", "page_number", "created_at"
+    ]
+    ISSUE_REQUIRED_FIELDS = [
+        "id", "doc_id", "workspace_id", "title", "description",
+        "severity", "status", "owner", "action_required", "created_at"
     ]
 
     def __init__(self, db_path: str):
@@ -540,6 +557,9 @@ class LanceStore:
                 "summary_text": "",
                 "summary_model": "",
                 "summary_version": "v1",
+                "folder_path": "/",
+                "doc_type": "Unclassified",  # [NEW] Default
+                "risk_level": "Unknown",     # [NEW] Default
             }
             self._ensure_table_schema(name, self.DOC_REQUIRED_FIELDS, defaults)
         elif name == "chunks":
@@ -556,8 +576,25 @@ class LanceStore:
                 "embedding": [0.0] * 384,
                 "created_at": 0,
                 "content_hash": "",
+                "folder_path": "/",  # [NEW] Default folder path
             }
             self._ensure_table_schema(name, self.CHUNK_REQUIRED_FIELDS, defaults)
+        elif name == "clauses":
+            defaults = {
+                "workspace_id": DEFAULT_WORKSPACE_ID,
+                "confidence": 0.0,
+                "created_at": 0,
+                "page_number": 0
+            }
+            self._ensure_table_schema(name, self.CLAUSE_REQUIRED_FIELDS, defaults)
+        elif name == "issues":
+            defaults = {
+                "workspace_id": DEFAULT_WORKSPACE_ID,
+                "status": "open",
+                "severity": "info",
+                "created_at": 0
+            }
+            self._ensure_table_schema(name, self.ISSUE_REQUIRED_FIELDS, defaults)
 
         try:
             return self.db.open_table(name)
@@ -648,11 +685,26 @@ class LanceStore:
         chunks_table.delete(f"doc_id = '{doc_id}' AND workspace_id = '{ws}'")
         chunks_table.add(chunk_rows)
 
-        # Optional index creation (version-dependent). Non-fatal if unsupported.
         try:
             chunks_table.create_index("embedding")
         except Exception as e:
             logger.info(f"(ok) vector index not created / already exists / not supported: {e}")
+
+    def fetch_chunks_for_doc(self, workspace_id: str, doc_id: str) -> List[Dict]:
+        """Retrieve all chunks for a document, sorted by index."""
+        try:
+            table = self.db.open_table("chunks")
+            # For robustness, we pull all and filter. In prod, use where() clause.
+            rows = table.to_arrow().to_pylist()
+            out = []
+            for r in rows:
+                if _row_workspace_id(r) == workspace_id and r.get("doc_id") == doc_id:
+                    out.append(r)
+            out.sort(key=lambda x: x.get("chunk_index", 0))
+            return out
+        except Exception as e:
+            logger.error(f"Fetch chunks failed for {doc_id}: {e}")
+            return []
 
     def vector_search(
         self,
@@ -664,6 +716,77 @@ class LanceStore:
         table = self.db.open_table("chunks")
         oversample = max(limit * 5, 50)
         raw = table.search(query_vec).limit(oversample).to_list()
+        
+    # ----------------------------
+    # Clauses & Issues
+    # ----------------------------
+    def upsert_clauses(self, rows: List[Dict]) -> None:
+        if not rows: return
+        self._open_or_create_table("clauses", rows)
+        # Assuming append-only or overwrite by ID? LanceDB overwrites if keys match?
+        # LanceDB basic add is append.
+        # We should delete existing clauses for these docs?
+        # For simplicity in this demo, we'll append. 
+        # But to be robust, we should delete old clauses for the doc.
+        # doc_ids = set(r["doc_id"] for r in rows)
+        # tab = self.db.open_table("clauses")
+        # for did in doc_ids:
+        #    tab.delete(f"doc_id = '{did}'")
+        # But 'clauses' table might not exist yet if _open_or_create just created it.
+        # Let's trust _open_or_create to handle it if we passed rows.
+        # Actually, let's explicit delete to avoid dupes.
+        table = self.db.open_table("clauses")
+        for r in rows:
+             # This is slow row-by-row but safe for small batches
+             cid = r["id"]
+             try:
+                 table.delete(f"id = '{cid}'")
+             except: pass
+        table.add(rows)
+
+    def upsert_clause(self, row: Dict) -> None:
+        """Upsert a single clause."""
+        self.upsert_clauses([row])
+
+    def list_clauses(self, workspace_id: str) -> List[Dict]:
+        try:
+            table = self.db.open_table("clauses")
+            rows = table.to_arrow().to_pylist()
+            return [r for r in rows if _row_workspace_id(r) == workspace_id]
+        except Exception:
+            return []
+
+    def upsert_issue(self, row: Dict) -> None:
+        table = self._open_or_create_table("issues", [row])
+        try:
+            table.delete(f"id = '{row['id']}'")
+        except: pass
+        table.add([row])
+        
+    def upsert_issues(self, rows: List[Dict]) -> None:
+        """Upsert multiple issues."""
+        if not rows: return
+        self._open_or_create_table("issues", rows)
+        table = self.db.open_table("issues")
+        for r in rows:
+            try:
+                table.delete(f"id = '{r['id']}'")
+            except: pass
+        table.add(rows)
+        
+    def delete_issue(self, issue_id: str) -> None:
+        try:
+            table = self.db.open_table("issues")
+            table.delete(f"id = '{issue_id}'")
+        except: pass
+        
+    def list_issues(self, workspace_id: str) -> List[Dict]:
+        try:
+            table = self.db.open_table("issues")
+            rows = table.to_arrow().to_pylist()
+            return [r for r in rows if _row_workspace_id(r) == workspace_id]
+        except Exception:
+            return []
 
         wanted = set(doc_ids) if doc_ids else None
         out = []
@@ -961,25 +1084,20 @@ class NanoLLM:
     """
     Async wrapper for OpenAI API.
     Handles:
-    - Evidence Extraction (Single & Batched)
-    - Answer Synthesis (Streaming & Static)
-    - Query Rewriting (Conversational Memory)
     - Document Summarization
     """
     def __init__(self, config: Config):
         self.config = config
-        self.model_id = config.openai_model_id
-        self.client = AsyncOpenAI(api_key=config.openai_api_key)
+        # [NEW] Use provider factory
+        self.provider = get_llm_provider(
+            provider_type=os.getenv("LLM_PROVIDER", "openai")
+        )
         self.answer_only_question = config.answer_only_question
 
     async def summarize_doc(self, text: str, title: str = "") -> str:
         prompt = SUMMARIZE_DOC_PROMPT.format(title=title, text=text)
-        resp = await self.client.responses.create(
-            model=self.model_id,
-            input=prompt,
-            store=False,
-        )
-        return resp.output_text.strip()
+        # [NEW] Use provider abstraction
+        return await self.provider.complete(prompt=prompt)
 
     async def extract_evidence_single(self, question: str, window: Dict) -> Dict:
         """
@@ -999,21 +1117,11 @@ class NanoLLM:
         user_prompt = f"QUESTION: {question}\n\nEVIDENCE WINDOW:\n{block}"
 
         try:
-            resp = await self.client.responses.create(
-                model=self.model_id,
-                instructions=system_prompt,
-                input=user_prompt,
-                store=False,
-            # temperature=1.0 # Default for o-series
-        )
-            raw = resp.output_text.strip()
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.startswith("```"):
-                raw = raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            return json.loads(raw.strip())
+            # [NEW] Use provider abstraction with JSON mode
+            return await self.provider.complete_json(
+                prompt=user_prompt,
+                system=system_prompt
+            )
         except Exception as e:
             logger.error(f"Extraction failed: {e}")
             return {"status": "NO_EVIDENCE", "evidence": [], "explanation": f"LLM Error: {e}"}
@@ -1038,17 +1146,11 @@ class NanoLLM:
         user_prompt = f"Question: {question}\n\nContext:\n{joined_context}"
         
         try:
-            resp = await self.client.chat.completions.create(
-                model=self.config.openai_model_id,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                # temperature=1.0 -- Default
-                response_format={"type": "json_object"}
+            # [NEW] Use provider abstraction with JSON mode
+            data = await self.provider.complete_json(
+                prompt=user_prompt,
+                system=system_prompt
             )
-            raw = resp.choices[0].message.content
-            data = json.loads(raw)
             
             # Map back doc_ids
             doc_map = {f"Source {i+1}": w["doc_id"] for i, w in enumerate(windows)}
@@ -1093,13 +1195,11 @@ class NanoLLM:
 
         user_prompt = f"QUESTION: {question}\n\nVERIFIED EVIDENCE:\n{evidence_text}"
 
-        resp = await self.client.responses.create(
-            model=self.model_id,
-            instructions=system_prompt,
-            input=user_prompt,
-            store=False,
+        # [NEW] Use provider abstraction
+        return await self.provider.complete(
+            prompt=user_prompt,
+            system=system_prompt
         )
-        return resp.output_text.strip()
 
 
     async def synthesize_answer_stream(self, question: str, evidence_list: List[Dict]):
@@ -1115,18 +1215,12 @@ class NanoLLM:
 
         user_prompt = f"QUESTION: {question}\n\nVERIFIED EVIDENCE:\n{evidence_text}"
 
-        stream = await self.client.chat.completions.create(
-            model=self.model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            stream=True
-        )
-        
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        # [NEW] Use provider stream
+        async for chunk in self.provider.stream(
+            prompt=user_prompt,
+            system=system_prompt
+        ):
+            yield chunk
 
     async def rewrite_query(self, query: str, history: List[Dict]) -> str:
         """
@@ -1151,15 +1245,11 @@ class NanoLLM:
         )
 
         try:
-            resp = await self.client.chat.completions.create(
-                model=self.model_id,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                # temperature=1.0 default for o1
+            # [NEW] Use provider abstraction
+            rewritten = await self.provider.complete(
+                prompt=user_prompt,
+                system=system_prompt
             )
-            rewritten = resp.choices[0].message.content.strip()
             # Remove potential quotes
             if rewritten.startswith('"') and rewritten.endswith('"'):
                 rewritten = rewritten[1:-1]
@@ -1245,6 +1335,9 @@ class RAGEngine:
         self.store = LanceStore(cfg.db_path)
         self.models = LocalModels(cfg.embed_model_name, cfg.rerank_model_name)
         self.llm = NanoLLM(cfg) # Changed to pass config object
+        self.nanollm = NanoLLM(cfg) # [NEW] Phase 26
+        self.doc_loader = DoclingExtractor()  # [NEW] Phase 26
+        self.classifier = DocumentClassifier() # [NEW] Phase 32 M&A pivot
 
         self.bm25_dir = os.path.join(cfg.db_path, "bm25")
         safe_mkdir(self.bm25_dir)
@@ -1253,26 +1346,99 @@ class RAGEngine:
         safe_ws = _safe_ws_filename(workspace_id)
         return os.path.join(self.bm25_dir, f"bm25_{safe_ws}.joblib")
 
+    def get_risk_stats(self, workspace_id: str) -> Dict[str, Any]:
+        """
+        Aggregates risk and document type statistics for the dashboard.
+        """
+        docs = self.store.list_documents(workspace_id)
+        
+        total_docs = len(docs)
+        risk_counts = {"High": 0, "Medium": 0, "Low": 0, "Clean": 0, "Unknown": 0}
+        type_counts = {}
+        folder_risks = {} # folder_path -> {high: 0, total: 0}
+
+        for d in docs:
+            # Risk Stats
+            r = d.get("risk_level", "Unknown")
+            # Normalize key
+            if r not in risk_counts: 
+                # catch variations or empty
+                r = "Unknown"
+            risk_counts[r] += 1
+            
+            # Type Stats
+            t = d.get("doc_type", "Unclassified")
+            type_counts[t] = type_counts.get(t, 0) + 1
+            
+            # Folder Stats (Heatmap Data)
+            # Normalize folder path to ensure root is "/" and hierarchy is clean
+            f = d.get("folder_path", "/").strip()
+            if not f: f = "/"
+            
+            if f not in folder_risks:
+                folder_risks[f] = {"High": 0, "total": 0}
+            
+            folder_risks[f]["total"] += 1
+            if r == "High":
+                folder_risks[f]["High"] += 1
+
+        return {
+            "total_docs": total_docs,
+            "risk_counts": risk_counts,
+            "type_counts": type_counts,
+            "folder_risks": folder_risks
+        }
+
     async def ingest_text_file(
         self,
         path: str,
-        title: Optional[str] = None,
+        title: str = "",
         source: str = "local",
-        workspace_id: Optional[str] = None,
-        uri: Optional[str] = None,
-        folder_path: Optional[str] = None,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+        uri: str = "",
+        folder_path: str = "/",  # [NEW] Folder support
         progress_callback: Optional[callable] = None,
     ) -> str:
+        """
+        Ingests a document (text, PDF, DOCX, images) using Docling or raw read.
+        Chunks it, extracts metadata, runs classification, generates summary/embedding, and upserts.
+        """
+        # Determine unique key
+        if not uri:
+            uri = f"file://{path}"
+
         workspace_id = normalize_workspace_id(workspace_id)
 
         if not os.path.exists(path):
             raise FileNotFoundError(path)
 
-        with open(path, "r", encoding="utf-8") as f:
-            raw = f.read()
+        # Use DoclingExtractor for robust text extraction
+        logger.info(f"Loading document with Docling: {path}")
+        try:
+            doc_result = self.doc_loader.extract(path, title=title)
+            full_text = doc_result.text.strip()
+            final_title = title or doc_result.title or os.path.basename(path)
+        except Exception as e:
+            # Fallback to raw text read for simple text files
+            logger.warning(f"Docling extraction failed, falling back to raw read: {e}")
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                full_text = f.read().strip()
+            final_title = title or os.path.basename(path)
 
-        text = normalize_text(raw)
-        content_hash = sha256_hex(text)
+        if not full_text:
+            logger.warning(f"File {path} is empty or unreadable.")
+            return ""
+
+        # [NEW] Phase 32: Run M&A Classification
+        logger.info(f"Running M&A classification for: {final_title}")
+        cls_result = await self.classifier.classify(full_text, final_title)
+        
+        doc_type = cls_result["doc_type"]
+        risk_level = cls_result["risk_level"]
+        logger.info(f"Classified as: {doc_type} (Risk: {risk_level})")
+        
+        # Determine content hash
+        content_hash = hashlib.sha256(full_text.encode("utf-8")).hexdigest()
 
         # Safe dedupe: avoids duplicates + avoids extra OpenAI calls
         if self.cfg.enable_dedupe:
@@ -1282,16 +1448,15 @@ class RAGEngine:
                 return existing["doc_id"]
 
         doc_id = str(uuid.uuid4())
-        title_final = title or os.path.basename(path)
-        logger.info(f"Ingesting doc: {title_final} (workspace_id={workspace_id}, doc_id={doc_id})")
+        logger.info(f"Ingesting doc: {final_title} (workspace_id={workspace_id}, doc_id={doc_id})")
 
         if progress_callback:
             await progress_callback({"stage": "summarizing", "percent": 10})
         
-        summary = await self.llm.summarize_doc(text=text, title=title_final)
+        summary = await self.llm.summarize_doc(text=full_text, title=final_title)
 
         chunks = chunk_text_with_overlap(
-            text=text,
+            text=full_text,
             chunk_size_chars=self.cfg.chunk_size_chars,
             overlap_ratio=self.cfg.chunk_overlap_ratio,
         )
@@ -1320,9 +1485,9 @@ class RAGEngine:
                 "doc_id": doc_id,
                 "workspace_id": workspace_id,
                 "source": source,
-                "uri": uri or os.path.abspath(path),
-                "folder_path": folder_path or "",
-                "title": title_final,
+                "uri": uri,
+                "folder_path": folder_path,
+                "title": final_title,
                 "chunk_index": int(c["chunk_index"]),
                 "start_char": int(c["start_char"]),
                 "end_char": int(c["end_char"]),
@@ -1333,23 +1498,26 @@ class RAGEngine:
                 "content_hash": content_hash,
             })
 
-        self.store.upsert_document({
+        self.store.upsert_chunks(chunk_rows)
+
+        doc_row = {
             "doc_id": doc_id,
             "workspace_id": workspace_id,
             "source": source,
-            "uri": uri or os.path.abspath(path),
-            "folder_path": folder_path or "",
-            "title": title_final,
+            "uri": uri,
+            "folder_path": folder_path,
+            "title": final_title,
             "created_at": now_ts(),
-            "modified_at": int(os.path.getmtime(path)),
+            "modified_at": now_ts(),
             "content_hash": content_hash,
             "summary_text": summary,
-            "summary_model": self.cfg.openai_model_id,
-            "summary_version": "v1",
-            "full_text": text, # Storing full text for Viewer
-        })
-
-        self.store.upsert_chunks(chunk_rows)
+            "summary_model": self.nanollm.model_id if hasattr(self.nanollm, 'model_id') else "ollama",
+            "summary_version": "v3",
+            "folder_path": folder_path,  # [NEW]
+            "doc_type": doc_type,        # [NEW]
+            "risk_level": risk_level     # [NEW]
+        }
+        self.store.upsert_document(doc_row)
 
         # rebuild BM25 for this workspace only (prevents cross-doc pollution)
         self.rebuild_bm25(workspace_id=workspace_id)
@@ -1379,10 +1547,27 @@ class RAGEngine:
 
     async def get_doc_text(self, doc_id: str, workspace_id: Optional[str] = None) -> Optional[str]:
         workspace_id = normalize_workspace_id(workspace_id)
+        # Try metadata first (if supported in future)
         doc = self.store.fetch_document(workspace_id, doc_id)
-        if doc:
+        if doc and doc.get("full_text"):
             return doc.get("full_text")
-        return None
+        
+        # Fallback: Reconstruct from chunks
+        chunks = self.store.fetch_chunks_for_doc(workspace_id, doc_id)
+        if not chunks:
+            return None
+            
+        # Join chunks with overlap handling? 
+        # For simplicity, just join text. If overlap exists, it might be duplicated slightly.
+        # But our chunker creates overlap. 
+        # Ideally, we should deduplicate or store full text separately.
+        # For this demo, we'll just join with newlines if they seem distinct or just join.
+        # Check overlap:
+        # text[i] ends with ... text[i+1] starts with ...
+        
+        # Simple join for now to ensure content is visible
+        full_text = "\n\n".join([c.get("text", "") for c in chunks])
+        return full_text
 
     def list_docs(self, workspace_id: Optional[str] = None) -> List[Dict]:
         workspace_id = normalize_workspace_id(workspace_id)

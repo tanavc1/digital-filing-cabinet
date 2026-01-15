@@ -256,12 +256,19 @@ class OllamaProvider(LLMProvider):
                             continue
 
 
+def is_offline_mode() -> bool:
+    """Check if the system is running in offline mode."""
+    return os.getenv("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
+
+
 def get_llm_provider(
     provider_type: Optional[str] = None,
     **kwargs
 ) -> LLMProvider:
     """
     Factory function to create an LLM provider.
+    
+    In OFFLINE_MODE, always uses Ollama regardless of provider_type.
     
     Args:
         provider_type: "openai" or "ollama" (defaults to LLM_PROVIDER env var)
@@ -270,6 +277,11 @@ def get_llm_provider(
     Returns:
         LLMProvider instance
     """
+    # OFFLINE_MODE enforces local Ollama
+    if is_offline_mode():
+        logger.info("OFFLINE_MODE enabled - using local Ollama")
+        return OllamaProvider(**kwargs)
+    
     provider_type = provider_type or os.getenv("LLM_PROVIDER", "openai")
     provider_type = provider_type.lower().strip()
     
@@ -279,6 +291,7 @@ def get_llm_provider(
         return OpenAIProvider(**kwargs)
     else:
         raise ValueError(f"Unknown LLM provider: {provider_type}. Use 'openai' or 'ollama'.")
+
 
 
 async def check_ollama_available() -> bool:

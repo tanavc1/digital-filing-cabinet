@@ -1,205 +1,207 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useWorkspace } from "@/components/providers/workspace-provider";
-import { AnswerBlock } from "@/components/query/answer-block";
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Search, ArrowUp, Square } from "lucide-react";
-import { useQueryStream } from "@/hooks/use-query-stream";
-import { ScopeSelector } from "@/components/scope-selector";
-import { QueryHistory, addQueryToHistory } from "@/components/query/query-history";
-import { FolderFilter } from "@/components/folder-filter";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  Loader2,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
+  FileText,
+  BarChart3,
+  Calendar,
+  Clock,
+  Users,
+  Shield
+} from "lucide-react";
+import { useWorkspace } from "@/components/providers/workspace-provider";
+import api from "@/lib/api";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-export default function SearchPage() {
-  // Hooks
-  const {
-    messages,
-    streamStatus,
-    startStream,
-    reset,
-    isTyping
-  } = useQueryStream();
+export default function ProjectHome() {
+  const { workspace } = useWorkspace();
+  const router = useRouter();
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const {
-    selectedWorkspace,
-    workspaces,
-    docs,
-    setSelectedWorkspace,
-    workspaceCounts
-  } = useWorkspace();
-
-  // Local State
-  const [query, setQuery] = useState("");
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to bottom
   useEffect(() => {
-    if (messages.length > 0) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages, isTyping]);
+    const fetchStats = async () => {
+      try {
+        // Fetch stats from new endpoints
+        // Assuming api.getProjectStats exists or we call fetch direct
+        // Since I haven't added getProjectStats to frontend/lib/api.ts yet, I'll use fetch for demo speed
+        // Or I should assume api.ts update is next.
+        // I'll update api.ts next. For now, use fetch.
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/project/stats?workspace_id=${workspace.id}`);
+        const data = await res.json();
+        setStats(data);
+      } catch (e) {
+        console.error("Failed to load stats", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStats();
+  }, [workspace.id]);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    addQueryToHistory(query, selectedWorkspace);
-    await startStream(query, selectedWorkspace, selectedFolder);
-    setQuery("");
-  };
+  if (loading) {
+    return (
+      <div className="flex h-[50vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
-  const getResultForMessage = (msg: any) => ({
-    answer: msg.content,
-    sources: msg.sources || [],
-    abstained: msg.abstained,
-    explanation: msg.explanation,
-    closest_mentions: []
-  });
-
-  const isStreaming = streamStatus === "streaming";
+  if (!stats) return null;
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <div className="p-8 space-y-8 max-w-7xl mx-auto">
       {/* Header */}
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm flex-shrink-0 z-10">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
-            D
+      <div className="flex justify-between items-start">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="text-3xl font-bold tracking-tight">Project Home</h1>
+            <Badge variant="outline" className="text-indigo-600 border-indigo-200 bg-indigo-50">
+              Assignment: Acquisition Diligence
+            </Badge>
           </div>
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight">Digital Filing Cabinet</h1>
+          <p className="text-muted-foreground flex items-center gap-2">
+            <Calendar className="w-4 h-4" />
+            Deadline: <span className="font-semibold text-red-600">3 Days Remaining</span>
+            <span className="text-gray-300 mx-2">|</span>
+            <Users className="w-4 h-4" />
+            Team: 3 Reviewers Active
+          </p>
         </div>
-
-        <div className="flex items-center gap-4">
-          <FolderFilter
-            docs={docs}
-            selectedFolder={selectedFolder}
-            onSelect={setSelectedFolder}
-          />
-          <ScopeSelector
-            workspaces={workspaces}
-            selectedWorkspace={selectedWorkspace}
-            onSelect={setSelectedWorkspace}
-            counts={workspaceCounts}
-          />
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={() => router.push("/exports")}>
+            <FileText className="w-4 h-4 mr-2" />
+            View Deliverables
+          </Button>
+          <Button onClick={() => router.push("/review-queue")}>
+            Continue Review
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
         </div>
-      </header>
+      </div>
 
-      {/* Main Chat Area */}
-      <main className="flex-1 overflow-y-auto p-4 md:p-8">
-        <div className="max-w-3xl mx-auto space-y-8 pb-32">
+      {/* Pipeline Progress */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-sm font-medium text-gray-600 mb-1">
+          <span>Intake (Done)</span>
+          <span>Review ({Math.round(stats.completion_percentage)}%)</span>
+          <span>QA ({stats.qa_approved} Docs)</span>
+          <span>Delivery</span>
+        </div>
+        <Progress value={stats.completion_percentage} className="h-3" />
+      </div>
 
-          {/* Empty State */}
-          {messages.length === 0 && (
-            <>
-              <div className="flex flex-col items-center justify-center py-20 text-center space-y-6 opacity-50">
-                <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center text-gray-400">
-                  <Search className="w-10 h-10" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold text-gray-900">Ready to help</h2>
-                  <p className="text-gray-500 mt-2">Ask a question to start a conversation with your documents.</p>
-                </div>
-              </div>
+      {/* Key Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Docs Remaining</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.unreviewed}</div>
+            <p className="text-xs text-muted-foreground">
+              {stats.in_review} currently in progress
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Review Velocity</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.throughput_docs_per_hr}</div>
+            <p className="text-xs text-muted-foreground">
+              Docs per hour (Team avg)
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">QA Status</CardTitle>
+            <Shield className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.qa_approved}</div>
+            <p className="text-xs text-muted-foreground pt-1">
+              <span className="text-yellow-600 font-medium">{stats.qa_needed} Pending QA</span>
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Risks Flagged</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{stats.flagged}</div>
+            <p className="text-xs text-muted-foreground">
+              Requires Senior Review
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
-              <QueryHistory onSelectQuery={(q) => { setQuery(q); }} />
-            </>
-          )}
-
-          {/* Messages */}
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
-
-              {/* User Bubble */}
-              {msg.role === "user" ? (
-                <div className="bg-blue-600 text-white px-5 py-3 rounded-2xl rounded-tr-sm max-w-[85%] shadow-sm text-base">
-                  {msg.content}
-                </div>
-              ) : (
-                /* Assistant Answer Block */
-                <div className="w-full">
-                  <div className="flex items-center gap-2 mb-2 ml-1">
-                    <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center border border-green-200">
-                      <div className={`w-2 h-2 rounded-full ${msg.isStreaming ? "bg-green-500 animate-pulse" : "bg-green-600"}`} />
+      {/* Quick Actions / Activity */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="md:col-span-2 space-y-6">
+          <Card className="h-full">
+            <CardHeader>
+              <CardTitle>Recent Activity</CardTitle>
+              <CardDescription>Live stream of review actions</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Mock activity feed */}
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-start gap-4 pb-4 border-b last:border-0 last:pb-0">
+                    <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">
+                      JD
                     </div>
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Assistant</span>
+                    <div>
+                      <p className="text-sm font-medium">John Doe finished review of <span className="text-indigo-600">MSA_Acme_v2.pdf</span></p>
+                      <p className="text-xs text-gray-500">2 minutes ago • 12 clauses extracted</p>
+                    </div>
                   </div>
-
-                  <AnswerBlock
-                    result={getResultForMessage(msg)}
-                    docs={docs}
-                    statusMessage={msg.statusMessage}
-                    isStreaming={msg.isStreaming}
-                    isTyping={idx === messages.length - 1 && isTyping}
-                  />
-                </div>
-              )}
-
-            </div>
-          ))}
-          <div ref={bottomRef} />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </main>
 
-      {/* Input Footer */}
-      <div className="bg-white border-t p-4 flex-shrink-0 z-20">
-        <div className="max-w-3xl mx-auto">
-          <form onSubmit={handleSearch} className="relative shadow-lg rounded-2xl overflow-hidden border border-gray-200 focus-within:ring-2 ring-blue-500/20 transition-all bg-white">
-            <textarea
-              className="w-full pl-5 pr-14 py-[14px] text-lg border-none focus-visible:ring-0 focus:outline-none rounded-none bg-white resize-none min-h-[56px] max-h-[200px] placeholder:text-gray-400"
-              placeholder={`Message ${selectedWorkspace}...`}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSearch(e as any);
-                }
-              }}
-              disabled={isStreaming}
-              rows={1}
-              style={{
-                height: 'auto',
-                minHeight: '56px',
-                overflowY: query.split('\n').length > 3 || query.length > 200 ? 'auto' : 'hidden'
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = 'auto';
-                target.style.height = Math.min(target.scrollHeight, 200) + 'px';
-              }}
-            />
-            <div className="absolute right-2 bottom-[10px]">
-              {isStreaming ? (
-                <Button
-                  type="button"
-                  onClick={reset}
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-900 transition-all"
-                >
-                  <Square className="h-4 w-4 fill-current" />
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  disabled={!query.trim()}
-                  size="icon"
-                  className={`h-9 w-9 rounded-lg transition-all shadow-sm ${query.trim()
-                    ? "bg-blue-600 hover:bg-blue-700 text-white"
-                    : "bg-gray-100 text-gray-300 cursor-not-allowed"
-                    }`}
-                >
-                  <ArrowUp className="h-5 w-5" />
-                </Button>
-              )}
-            </div>
-          </form>
-          <div className="text-center mt-3">
-            <span className="text-[10px] text-gray-400 uppercase tracking-widest font-medium">
-              Context Aware • {selectedWorkspace}
-            </span>
-          </div>
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Delivery Status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex justify-between items-center text-sm">
+                <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Clause Matrix</span>
+                <Badge variant="secondary">Ready</Badge>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Issues List</span>
+                <Badge variant="secondary">Ready</Badge>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="flex items-center gap-2 text-gray-400"><Loader2 className="w-4 h-4" /> Evidence Pack</span>
+                <Badge variant="outline">Processing</Badge>
+              </div>
+              <Button className="w-full mt-4" variant="secondary" onClick={() => router.push("/exports")}>
+                Go to Exports
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

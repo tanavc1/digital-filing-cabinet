@@ -30,6 +30,8 @@ interface WorkspaceContextType {
     docs: Doc[];
     refreshDocs: () => Promise<void>;
     workspaceCounts: Record<string, number>;
+    uploadStatus: { isUploading: boolean; fileName?: string };
+    setUploadStatus: (status: { isUploading: boolean; fileName?: string }) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
@@ -38,6 +40,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const [workspace, setWorkspace] = useState<Workspace>(WORKSPACES[0]);
     const [docs, setDocs] = useState<Doc[]>([]);
     const [workspaceCounts, setWorkspaceCounts] = useState<Record<string, number>>({});
+    const [uploadStatus, setUploadStatus] = useState<{ isUploading: boolean; fileName?: string }>({ isUploading: false });
 
     // Load workspace from local storage
     useEffect(() => {
@@ -111,7 +114,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
                 availableWorkspaces: WORKSPACES, // Backward compat
                 docs,
                 refreshDocs,
-                workspaceCounts
+                workspaceCounts,
+                uploadStatus,
+                setUploadStatus
             }}
         >
             {children}

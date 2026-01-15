@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Search, Files, Building, ShieldCheck, Shield, GitCompare } from "lucide-react";
+import { Search, Files, Building, ShieldCheck, Shield, GitCompare, LayoutDashboard, FileText, Settings, ClipboardList, Grid3X3, AlertTriangle, Download, Loader2, Upload, Home, FolderOpen, Wand2, ClipboardCheck, AlertOctagon, PackageCheck, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "../providers/workspace-provider";
 import {
@@ -15,7 +15,7 @@ import {
 
 export function Sidebar() {
     const pathname = usePathname();
-    const { workspace, setSelectedWorkspace, availableWorkspaces, docs, workspaceCounts } = useWorkspace(); // Get docs & counts
+    const { workspace, setSelectedWorkspace, availableWorkspaces, docs, workspaceCounts, uploadStatus } = useWorkspace();
 
     const handleWorkspaceChange = (val: string) => {
         const found = availableWorkspaces.find((w) => w.id === val);
@@ -23,11 +23,16 @@ export function Sidebar() {
     };
 
     const navItems = [
-        { href: "/", label: "Search", icon: Search },
-        { href: "/documents", label: "Documents", icon: Files, count: docs?.length },
-        { href: "/audit", label: "Audit", icon: Shield },
-        { href: "/compare", label: "Compare", icon: GitCompare },
+        { href: "/", label: "Project Home", icon: Home },
+        { href: "/documents", label: "Data Room", icon: FolderOpen, count: docs?.length },
+        { href: "/clause-matrix", label: "Auto-Pass", icon: Wand2 },
+        { href: "/review-queue", label: "Review Queue", icon: ClipboardCheck },
+        { href: "/qa", label: "QA Mode", icon: ShieldCheck },
+        { href: "/issues", label: "Issues List", icon: AlertOctagon },
+        { href: "/exports", label: "Delivery Exports", icon: PackageCheck },
+        { href: "/settings", label: "Settings", icon: Settings },
     ];
+
 
     return (
         <div className="w-64 border-r h-screen bg-gray-50/50 flex flex-col">
@@ -84,12 +89,18 @@ export function Sidebar() {
             </nav>
 
             {/* Footer / Status */}
-            <div className="p-4 border-t bg-white">
+            <div className="p-4 border-t bg-white space-y-2">
+                {uploadStatus.isUploading && (
+                    <div className="flex items-center gap-2 text-xs text-indigo-600 font-medium bg-indigo-50 px-2 py-1.5 rounded-md">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="truncate">Uploading: {uploadStatus.fileName || 'file...'}</span>
+                    </div>
+                )}
                 <div className="flex items-center gap-2 text-xs text-green-600 font-medium">
                     <ShieldCheck className="w-3 h-3" />
                     <span>Evidence Enforcement Active</span>
                 </div>
-                <div className="mt-1 text-[10px] text-gray-400">
+                <div className="text-[10px] text-gray-400">
                     Backend: {process.env.NEXT_PUBLIC_API_URL || "Connected"}
                 </div>
             </div>
