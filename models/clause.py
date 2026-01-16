@@ -67,6 +67,25 @@ class Evidence:
         return f"{self.file}, p.{self.page}: \"{snippet_preview}\""
 
 
+@dataclass
+class Candidate:
+    """A potential candidate location for an unresolved clause."""
+    page: int
+    snippet: str
+    match_type: str = "keyword"  # keyword | semantic | heading
+    score: float = 0.0
+    locator: str = ""  # string representation of location (e.g. bbox or char range)
+
+    def to_dict(self) -> dict:
+        return {
+            "page": self.page,
+            "snippet": self.snippet,
+            "match_type": self.match_type,
+            "score": self.score,
+            "locator": self.locator
+        }
+
+
 CLAUSE_LABELS = {
     ClauseType.ASSIGNMENT_CONSENT: "Assignment/Consent",
     ClauseType.CHANGE_OF_CONTROL: "Change of Control",
@@ -91,6 +110,7 @@ class ClauseExtraction:
     extracted_value: str = ""  # Normalized value (e.g., "Consent required")
     status: ExtractionStatus = ExtractionStatus.UNRESOLVED  # NEW: Evidence-gated status
     evidence: List[Evidence] = field(default_factory=list)  # NEW: Replaces snippet
+    candidates: List[Candidate] = field(default_factory=list)  # NEW: Potential hits for unresolved clauses
     explanation: str = ""  # NEW: Why this status (e.g., "No assignment clause found")
     snippet: str = ""      # DEPRECATED: Keep for backwards compatibility
     page_number: int = 1
@@ -108,6 +128,7 @@ class ClauseExtraction:
             "extracted_value": self.extracted_value,
             "status": self.status.value,
             "evidence": [e.to_dict() for e in self.evidence],
+            "candidates": [c.to_dict() for c in self.candidates],
             "explanation": self.explanation,
             "snippet": self.snippet,  # Keep for backwards compat
             "page_number": self.page_number,
@@ -128,6 +149,7 @@ class ClauseExtraction:
             extracted_value=data.get("extracted_value", ""),
             status=ExtractionStatus(data.get("status", "unresolved")),
             evidence=evidence_list,
+            candidates=[Candidate(**c) if isinstance(c, dict) else c for c in data.get("candidates", [])],
             explanation=data.get("explanation", ""),
             snippet=data.get("snippet", ""),
             page_number=data.get("page_number", 1),

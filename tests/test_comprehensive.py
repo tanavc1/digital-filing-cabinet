@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.clause import (
-    ClauseType, ClauseExtraction, ExtractionStatus, Evidence, CLAUSE_LABELS
+    ClauseType, ClauseExtraction, ExtractionStatus, Evidence, CLAUSE_LABELS, Candidate
 )
 from models.issue import Issue, IssueSeverity
 
@@ -744,3 +744,55 @@ class TestStress:
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
 
+
+# =============================================================================
+# CANDIDATE HITS TESTS
+# =============================================================================
+
+class TestCandidateHits:
+    """Tests for the Candidate Hits feature (Unresolved -> Potential Locations)."""
+    
+    def test_candidate_generation_logic(self):
+        """Test _generate_candidates logic directly."""
+        from playbook_engine import PlaybookEngine
+        
+        # Mock engine/provider
+        class MockEngine: pass
+        
+        # Bypass init
+        pe = PlaybookEngine.__new__(PlaybookEngine)
+        pe.engine = MockEngine()
+        
+        content = "## Page 1\nIntro...\n## Page 5\n10. ASSIGNMENT. We shall not assign.\n"
+        candidates = pe._generate_candidates(content, ClauseType.ASSIGNMENT_CONSENT)
+        
+        assert len(candidates) > 0
+        assert candidates[0].page == 5
+        assert "assign" in candidates[0].snippet.lower()
+        
+    def test_api_resolve_candidate(self, api_client):
+        """Test resolving an unresolved clause via API using candidate data."""
+        # 1. Populate Unresolved Clause
+        from api import _clauses
+        clause_id = "test-cand-001"
+        _clauses[clause_id] = ClauseExtraction(
+            id=clause_id,
+            doc_id="doc1",
+            clause_type=ClauseType.ASSIGNMENT_CONSENT,
+            status=ExtractionStatus.UNRESOLVED,
+            candidates=[Candidate(page=1, snippet="foo", score=0.9)]
+        )
+        
+        # 2. Update via API
+        payload = {
+            "status": "resolved", 
+            "extracted_value": "foo",
+            "candidates": []
+        }
+        resp = api_client.put(f"/clauses/{clause_id}", json=payload)
+        assert resp.status_code == 200
+        
+        # 3. Verify
+        data = resp.json()
+        assert data["status"] == "resolved"
+        assert len(data["candidates"]) == 0

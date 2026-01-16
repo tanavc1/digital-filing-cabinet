@@ -38,6 +38,7 @@ from schedule_generator import ScheduleGenerator, ScheduleItem, DisclosureSchedu
 from llm_providers import is_offline_mode, check_ollama_available
 
 # Production-grade logging
+from models.clause import ClauseExtraction, ExtractionStatus, Evidence, Candidate
 logger = logging.getLogger("api")
 logging.basicConfig(
     level=logging.INFO,
@@ -1691,23 +1692,47 @@ async def get_clause(clause_id: str):
         raise HTTPException(status_code=404, detail="Clause not found")
     return _clauses[clause_id].to_dict()
 
+class ClauseUpdate(BaseModel):
+    verified: Optional[bool] = None
+    flagged: Optional[bool] = None
+    extracted_value: Optional[str] = None
+    status: Optional[str] = None
+    evidence: Optional[List[Dict]] = None
+    explanation: Optional[str] = None
+    candidates: Optional[List[Dict]] = None
+
 @app.put("/clauses/{clause_id}")
-async def update_clause(clause_id: str, verified: Optional[bool] = None, flagged: Optional[bool] = None):
-    """Update clause verification status."""
+async def update_clause(clause_id: str, update: ClauseUpdate):
+    """Update clause fields."""
     if clause_id not in _clauses:
         raise HTTPException(status_code=404, detail="Clause not found")
     
     clause = _clauses[clause_id]
-    if verified is not None:
-        clause.verified = verified
-    if flagged is not None:
-        clause.flagged = flagged
+    
+    # Update fields if provided
+    if update.verified is not None:
+        clause.verified = update.verified
+    if update.flagged is not None:
+        clause.flagged = update.flagged
+    if update.extracted_value is not None:
+        clause.extracted_value = update.extracted_value
+    if update.status is not None:
+        try:
+            clause.status = ExtractionStatus(update.status)
+        except ValueError:
+            pass # Ignore invalid status
+    if update.evidence is not None:
+        clause.evidence = [Evidence(**e) if isinstance(e, dict) else e for e in update.evidence]
+    if update.explanation is not None:
+        clause.explanation = update.explanation
+    if update.candidates is not None:
+        clause.candidates = [Candidate(**c) if isinstance(c, dict) else c for c in update.candidates]
     
     # Persist
     try:
         engine = get_engine()
         row = clause.to_dict()
-        row["workspace_id"] = DEFAULT_WORKSPACE_ID # TODO: Pass workspace in update_clause
+        row["workspace_id"] = DEFAULT_WORKSPACE_ID 
         engine.store.upsert_clause(row)
     except Exception as e:
         logger.error(f"Failed to persist clause update: {e}")

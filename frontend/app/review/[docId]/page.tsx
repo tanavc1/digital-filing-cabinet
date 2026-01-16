@@ -23,7 +23,8 @@ import {
     X,
     AlertTriangle,
     CheckCircle,
-    Minus
+    Minus,
+    Search
 } from "lucide-react";
 
 interface Evidence {
@@ -46,6 +47,13 @@ interface ClauseData {
     confidence: number;
     verified: boolean;
     flagged: boolean;
+    candidates?: {
+        page: number;
+        snippet: string;
+        match_type: string;
+        score: number;
+        locator: string;
+    }[];
 }
 
 const CLAUSE_LABELS: Record<string, string> = {
@@ -198,6 +206,55 @@ export default function DocumentReviewPage() {
         if (clause.evidence.length > 0) {
             const ev = clause.evidence[0];
             setHighlightRange({ start: ev.char_start, end: ev.char_end });
+        }
+    }
+
+    function handleHighlightCandidate(candidate: any) {
+        if (!content || !candidate.snippet) return;
+        // Remove ellipses if present
+        let cleanSnippet = candidate.snippet.replace(/^\.\.\./, "").replace(/\.\.\.$/, "");
+        const idx = content.indexOf(cleanSnippet);
+        if (idx >= 0) {
+            setHighlightRange({ start: idx, end: idx + cleanSnippet.length });
+        }
+    }
+
+    async function handleUseCandidate(clause: ClauseData, candidate: any) {
+        try {
+            setSaving(true);
+            const cleanSnippet = candidate.snippet.replace(/^\.\.\./, "").replace(/\.\.\.$/, "");
+            const idx = content.indexOf(cleanSnippet);
+
+            const evidence = [{
+                file: document?.title || "",
+                page: candidate.page,
+                snippet: cleanSnippet,
+                char_start: idx >= 0 ? idx : 0,
+                char_end: idx >= 0 ? idx + cleanSnippet.length : 0
+            }];
+
+            await updateClause(clause.id, {
+                extracted_value: cleanSnippet,
+                verified: true,
+                status: "resolved",
+                evidence: evidence,
+                explanation: "Manually resolved from candidate hit"
+            });
+
+            setClauses(prev => prev.map(c =>
+                c.id === clause.id ? {
+                    ...c,
+                    extracted_value: cleanSnippet,
+                    verified: true,
+                    status: "resolved",
+                    evidence: evidence as any,
+                    candidates: [] // clear candidates after solving
+                } : c
+            ));
+        } catch (err) {
+            console.error("Failed to use candidate:", err);
+        } finally {
+            setSaving(false);
         }
     }
 
@@ -362,6 +419,48 @@ export default function DocumentReviewPage() {
                                             <div className="text-xs bg-slate-100 p-2 rounded border-l-2 border-indigo-400">
                                                 <span className="font-medium">p.{clause.evidence[0].page}:</span>{" "}
                                                 "{clause.evidence[0].snippet.slice(0, 100)}..."
+                                            </div>
+                                        )}
+
+                                        {/* Candidate Hits */}
+                                        {clause.status === "unresolved" && clause.candidates && clause.candidates.length > 0 && (
+                                            <div className="mt-3 border-t pt-3">
+                                                <p className="text-xs font-semibold mb-2 text-indigo-600 flex items-center gap-1">
+                                                    <Search className="h-3 w-3" />
+                                                    Potential Candidates ({clause.candidates.length})
+                                                </p>
+                                                <div className="space-y-2">
+                                                    {clause.candidates.map((cand, idx) => (
+                                                        <div
+                                                            key={idx}
+                                                            className="bg-slate-50 p-2 rounded text-xs border border-slate-100 hover:border-indigo-200 transition-colors cursor-pointer"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleHighlightCandidate(cand);
+                                                            }}
+                                                        >
+                                                            <div className="flex justify-between items-start mb-1">
+                                                                <Badge variant="secondary" className="text-[10px] h-4">
+                                                                    Page {cand.page}
+                                                                </Badge>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
+                                                                    className="h-5 text-[10px] px-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleUseCandidate(clause, cand);
+                                                                    }}
+                                                                >
+                                                                    Select
+                                                                </Button>
+                                                            </div>
+                                                            <p className="text-muted-foreground line-clamp-2" title={cand.snippet}>
+                                                                "{cand.snippet}"
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         )}
 

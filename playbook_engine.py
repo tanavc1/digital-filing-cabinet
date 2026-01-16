@@ -20,7 +20,8 @@ from models.clause import (
     get_playbook,
     CLAUSE_LABELS,
     Evidence,
-    ExtractionStatus
+    ExtractionStatus,
+    Candidate
 )
 from models.issue import Issue, IssueSeverity
 from llm_providers import get_llm_provider
@@ -456,6 +457,57 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
         
         return extractions, issues
     
+    def _generate_candidates(self, content: str, clause_type: ClauseType) -> List[Candidate]:
+        """Generate high-recall candidate hits using keyword scanning."""
+        candidates = []
+        keywords = CLAUSE_KEYWORDS.get(clause_type, [])
+        if not keywords:
+            return []
+            
+        # Split by pages
+        import re
+        page_splits = re.split(r'(## Page \d+)', content)
+        
+        current_page = 1
+        for fragment in page_splits:
+            if fragment.startswith("## Page"):
+                try:
+                    current_page = int(fragment.replace("## Page", "").strip())
+                except ValueError:
+                    pass
+                continue
+            
+            if not fragment.strip():
+                continue
+                
+            # Scan this page fragment
+            text_lower = fragment.lower()
+            for kw in keywords:
+                kw_str = kw.lower()
+                if kw_str in text_lower:
+                    # Found a hit!
+                    kw_idx = text_lower.find(kw_str)
+                    # Extract snippet (~200 chars)
+                    start = max(0, kw_idx - 50)
+                    end = min(len(fragment), kw_idx + 150)
+                    snippet = fragment[start:end].strip()
+                    if start > 0: snippet = "..." + snippet
+                    if end < len(fragment): snippet = snippet + "..."
+                    
+                    candidates.append(Candidate(
+                        page=current_page,
+                        snippet=snippet,
+                        match_type="keyword",
+                        score=0.8, # Simple fixed score for keyword match
+                        locator=kw # Just using keyword as simple locator for now
+                    ))
+                    break # Only one hit per keyword per page fragment
+        
+        # Deduplicate and sort
+        unique_candidates = {f"{c.page}-{c.snippet[:10]}": c for c in candidates}.values()
+        sorted_candidates = sorted(unique_candidates, key=lambda x: x.score, reverse=True)
+        return list(sorted_candidates)[:5] # Top 5 targets
+
     def _process_clause_result(
         self,
         doc: Dict,
@@ -466,7 +518,9 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
         """Process a single clause extraction result from batch response."""
         
         if not result or not result.get("found", False):
-            # Clause not found → UNRESOLVED
+            # Clause not found → UNRESOLVED → Generate Candidates
+            candidates = self._generate_candidates(content, clause_type)
+            
             return ClauseExtraction(
                 doc_id=doc["doc_id"],
                 doc_title=doc.get("title", "Unknown"),
@@ -474,6 +528,7 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
                 extracted_value="",
                 status=ExtractionStatus.UNRESOLVED,
                 evidence=[],
+                candidates=candidates, # NEW: Add candidates
                 explanation=result.get("explanation", f"No {CLAUSE_LABELS.get(clause_type, clause_type.value).lower()} language found"),
                 snippet="",
                 page_number=1,
@@ -493,6 +548,8 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
         # Check for cross-contamination
         contamination = detect_cross_contamination(snippet, clause_type)
         if contamination:
+            # Contamination -> UNRESOLVED -> Generate Candidates
+            candidates = self._generate_candidates(content, clause_type)
             return ClauseExtraction(
                 doc_id=doc["doc_id"],
                 doc_title=doc.get("title", "Unknown"),
@@ -500,6 +557,7 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
                 extracted_value="",
                 status=ExtractionStatus.UNRESOLVED,
                 evidence=[],
+                candidates=candidates, # NEW: Add candidates
                 explanation=f"Cross-contamination detected: {contamination}",
                 snippet="",
                 page_number=1,
@@ -529,6 +587,11 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
         else:
             status = ExtractionStatus.UNRESOLVED
         
+        # If still unresolved (e.g. no evidence), generate candidates
+        candidates = []
+        if status == ExtractionStatus.UNRESOLVED:
+            candidates = self._generate_candidates(content, clause_type)
+
         extraction = ClauseExtraction(
             doc_id=doc["doc_id"],
             doc_title=doc.get("title", "Unknown"),
@@ -536,6 +599,7 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
             extracted_value=extracted_value,
             status=status,
             evidence=evidence_list,
+            candidates=candidates, # NEW: Add candidates
             explanation=result.get("explanation", f"Extracted with {confidence:.0%} confidence"),
             snippet=snippet,
             page_number=page_number,

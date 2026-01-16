@@ -309,6 +309,22 @@ export interface Playbook {
     clause_types: string[];
 }
 
+export interface ClauseEvidence {
+    file: string;
+    page: number;
+    snippet: string;
+    char_start: number;
+    char_end: number;
+}
+
+export interface Candidate {
+    page: number;
+    snippet: string;
+    match_type: string;
+    score: number;
+    locator: string;
+}
+
 export interface ClauseExtraction {
     id: string;
     doc_id: string;
@@ -320,6 +336,10 @@ export interface ClauseExtraction {
     confidence: number;
     verified: boolean;
     flagged: boolean;
+    status: string;
+    evidence: ClauseEvidence[];
+    explanation: string;
+    candidates: Candidate[];
 }
 
 export const getPlaybooks = async () => {
@@ -342,11 +362,8 @@ export const getClause = async (clauseId: string) => {
     return res.data;
 };
 
-export const updateClause = async (clauseId: string, update: { verified?: boolean; flagged?: boolean }) => {
-    const params = new URLSearchParams();
-    if (update.verified !== undefined) params.append("verified", String(update.verified));
-    if (update.flagged !== undefined) params.append("flagged", String(update.flagged));
-    const res = await api.put(`/clauses/${clauseId}?${params.toString()}`);
+export const updateClause = async (clauseId: string, update: Partial<ClauseExtraction>) => {
+    const res = await api.put(`/clauses/${clauseId}`, update);
     return res.data;
 };
 
