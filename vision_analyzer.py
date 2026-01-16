@@ -5,7 +5,7 @@ Vision Analyzer Module
 Multi-modal image analysis with provider abstraction.
 Supports:
 1. Google Gemini Flash (cloud) - default
-2. Ollama LLaVA (local) - air-gapped environments
+2. Ollama Qwen3-VL (local) - air-gapped environments
 
 Configured via VISION_PROVIDER env var: "gemini" or "ollama"
 """
@@ -31,7 +31,7 @@ MIN_IMAGE_DIMENSION = 100  # 100px minimum width/height
 # Provider configuration
 VISION_PROVIDER = os.getenv("VISION_PROVIDER", "gemini")  # "gemini" or "ollama"
 GEMINI_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "llava:13b")
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3-vl:8b")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
@@ -60,7 +60,7 @@ def _check_ollama_vision_available() -> bool:
                 resp = client.get(f"{OLLAMA_HOST}/api/tags")
                 if resp.status_code == 200:
                     models = [m["name"] for m in resp.json().get("models", [])]
-                    _ollama_available = any("llava" in m.lower() for m in models)
+                    _ollama_available = any("qwen3-vl" in m.lower() or "llava" in m.lower() for m in models)
                 else:
                     _ollama_available = False
         except Exception:
@@ -163,7 +163,7 @@ def _analyze_image_ollama(
     prompt: str
 ) -> VisionResult:
     """
-    Analyze image using Ollama with LLaVA model (local).
+    Analyze image using Ollama with Qwen3-VL model (local).
     """
     try:
         # Resize for efficiency

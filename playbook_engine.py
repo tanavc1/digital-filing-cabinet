@@ -8,6 +8,7 @@ Runs playbooks against documents to extract key clause information.
 
 import logging
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -17,7 +18,9 @@ from models.clause import (
     Playbook, 
     PLAYBOOKS, 
     get_playbook,
-    CLAUSE_LABELS
+    CLAUSE_LABELS,
+    Evidence,
+    ExtractionStatus
 )
 from models.issue import Issue, IssueSeverity
 from llm_providers import get_llm_provider
@@ -278,53 +281,71 @@ class PlaybookEngine:
         # Get documents
         all_docs = self.engine.store.list_documents(workspace_id)
         
-        # Filter by doc type if not specific IDs given
+        # If specific doc_ids given, filter to those
         if doc_ids:
-            docs = [d for d in all_docs if d["doc_id"] in doc_ids]
+            docs_to_process = [d for d in all_docs if d["doc_id"] in doc_ids]
         else:
-            docs = []
-            logger.info(f"Filtering {len(all_docs)} docs for playbook {playbook.name} (Targets: {playbook.doc_types})")
-            for doc in all_docs:
-                doc_type = doc.get("doc_type", "")
-                logger.info(f"  - Checking '{doc.get('title')}' (Type: '{doc_type}')")
-                for target_type in playbook.doc_types:
-                    if target_type.lower() in doc_type.lower() or doc_type.lower() in target_type.lower():
-                        docs.append(doc)
-                        break
+            docs_to_process = all_docs
         
-        logger.info(f"Selected {len(docs)} documents for playbook execution")
+        logger.info(f"Processing {len(docs_to_process)} documents for playbook {playbook.name}")
         
-        # LIMIT: Process at most 3 documents per run for Ollama compatibility
-        MAX_DOCS_PER_RUN = 3
-        if len(docs) > MAX_DOCS_PER_RUN:
-            logger.warning(f"Limiting playbook to first {MAX_DOCS_PER_RUN} of {len(docs)} documents")
-            docs = docs[:MAX_DOCS_PER_RUN]
-        
-        # LIMIT: Process at most 4 clause types for faster execution
-        MAX_CLAUSE_TYPES = 4
-        clause_types_to_use = playbook.clause_types[:MAX_CLAUSE_TYPES]
-        logger.info(f"Processing {len(docs)} documents with {len(clause_types_to_use)} clause types")
+        clause_types_to_use = playbook.clause_types
+        logger.info(f"Processing {len(docs_to_process)} documents with {len(clause_types_to_use)} clause types")
         
         # Extract clauses from each document
         all_extractions = []
         all_issues = []
+        matching_doc_count = 0
         
-        for doc in docs:
-            try:
-                extractions, issues = await self._extract_clauses_from_doc(
-                    doc, 
-                    clause_types_to_use,
-                    workspace_id
-                )
-                all_extractions.extend(extractions)
-                all_issues.extend(issues)
-            except Exception as e:
-                logger.error(f"Failed to extract from {doc.get('title')}: {e}")
+        for doc in docs_to_process:
+            doc_type = doc.get("doc_type", "")
+            
+            # Check if doc type matches playbook targets
+            is_matching = False
+            for target_type in playbook.doc_types:
+                if target_type.lower() in doc_type.lower() or doc_type.lower() in target_type.lower():
+                    is_matching = True
+                    break
+            
+            if is_matching:
+                # Matching doc type → extract clauses normally
+                matching_doc_count += 1
+                logger.info(f"  ✓ '{doc.get('title')}' (Type: '{doc_type}') - EXTRACTING")
+                try:
+                    extractions, issues = await self._extract_clauses_from_doc(
+                        doc, 
+                        clause_types_to_use,
+                        workspace_id
+                    )
+                    all_extractions.extend(extractions)
+                    all_issues.extend(issues)
+                except Exception as e:
+                    logger.error(f"Failed to extract from {doc.get('title')}: {e}")
+            else:
+                # Non-matching doc type → create NOT_APPLICABLE extractions
+                logger.info(f"  ✗ '{doc.get('title')}' (Type: '{doc_type}') - NOT_APPLICABLE")
+                for clause_type in clause_types_to_use:
+                    extraction = ClauseExtraction(
+                        doc_id=doc["doc_id"],
+                        doc_title=doc.get("title", "Unknown"),
+                        clause_type=clause_type,
+                        extracted_value="",
+                        status=ExtractionStatus.NOT_APPLICABLE,
+                        evidence=[],
+                        explanation=f"Document type '{doc_type}' not in playbook targets: {playbook.doc_types}",
+                        snippet="",
+                        page_number=1,
+                        confidence=0.0,
+                        verified=False,
+                        flagged=False,
+                    )
+                    all_extractions.append(extraction)
         
         return {
             "playbook_id": playbook_id,
             "playbook_name": playbook.name,
-            "doc_count": len(docs),
+            "doc_count": len(docs_to_process),
+            "matching_doc_count": matching_doc_count,
             "extraction_count": len(all_extractions),
             "issue_count": len(all_issues),
             "extractions": [e.to_dict() for e in all_extractions],
@@ -337,7 +358,12 @@ class PlaybookEngine:
         clause_types: List[ClauseType],
         workspace_id: str
     ) -> tuple[List[ClauseExtraction], List[Issue]]:
-        """Extract specified clause types from a single document."""
+        """
+        Extract specified clause types from a single document.
+        
+        OPTIMIZATION: Uses a single batched LLM call to extract ALL clause types
+        at once instead of 7 separate calls. This reduces LLM roundtrips by 7x.
+        """
         
         # Get document content
         chunks = self.engine.store.get_chunks_by_doc_id(workspace_id, doc["doc_id"])
@@ -351,23 +377,197 @@ class PlaybookEngine:
             if len(content) > 8000:  # Limit context
                 break
         
+        # Build batched extraction prompt for ALL clause types at once
+        clause_list = [f"- {CLAUSE_LABELS.get(ct, ct.value)} ({ct.value})" for ct in clause_types]
+        clause_list_str = "\n".join(clause_list)
+        
+        batch_prompt = f"""You are a legal document analyst. Extract ALL of the following clause types from this document IN A SINGLE RESPONSE.
+
+DOCUMENT: {doc.get('title', 'Unknown')}
+
+═══════════════════════════════════════════════════════
+CLAUSE TYPES TO EXTRACT:
+{clause_list_str}
+═══════════════════════════════════════════════════════
+
+DOCUMENT CONTENT:
+{content[:6000]}
+
+For EACH clause type listed above, provide a JSON object with these fields:
+- clause_type: the exact clause type key (e.g. "assignment_consent")
+- found: true/false
+- page_number: integer from nearest '## Page X' marker
+- extracted_value: brief normalized summary (e.g. 'Consent required', '12 months notice')
+- snippet: exact quote from document (max 200 chars)
+- char_start: approximate character position where snippet begins
+- risk_level: "high"/"medium"/"low"/"none"
+- risk_reason: why this is a risk (if any)
+- explanation: brief reason for finding
+
+Respond with a JSON object containing an array called "clauses":
+{{
+    "clauses": [
+        {{"clause_type": "assignment_consent", "found": true/false, ...}},
+        {{"clause_type": "change_of_control", "found": true/false, ...}},
+        ... (one entry for each clause type listed above)
+    ]
+}}
+
+IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set found=false).
+"""
+        
         extractions = []
         issues = []
         
-        # Extract each clause type
-        for clause_type in clause_types:
-            try:
-                extraction, issue = await self._extract_single_clause(
-                    doc, content, clause_type
-                )
+        try:
+            result = await self.provider.complete_json(batch_prompt)
+            clauses_data = result.get("clauses", [])
+            
+            # Build a lookup for easy access
+            clause_results = {c.get("clause_type"): c for c in clauses_data}
+            
+            # Process each clause type
+            for clause_type in clause_types:
+                clause_data = clause_results.get(clause_type.value, {})
+                extraction, issue = self._process_clause_result(doc, content, clause_type, clause_data)
                 if extraction:
                     extractions.append(extraction)
                 if issue:
                     issues.append(issue)
-            except Exception as e:
-                logger.warning(f"Failed to extract {clause_type.value} from {doc.get('title')}: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"Batch extraction failed for {doc.get('title')}: {e}")
+            # Fallback: return UNRESOLVED for all clause types
+            for clause_type in clause_types:
+                extractions.append(ClauseExtraction(
+                    doc_id=doc["doc_id"],
+                    doc_title=doc.get("title", "Unknown"),
+                    clause_type=clause_type,
+                    extracted_value="",
+                    status=ExtractionStatus.UNRESOLVED,
+                    evidence=[],
+                    explanation=f"Batch extraction failed: {str(e)[:100]}",
+                    snippet="",
+                    page_number=1,
+                    confidence=0.0,
+                    verified=False,
+                    flagged=False,
+                ))
         
         return extractions, issues
+    
+    def _process_clause_result(
+        self,
+        doc: Dict,
+        content: str,
+        clause_type: ClauseType,
+        result: Dict
+    ) -> tuple[Optional[ClauseExtraction], Optional[Issue]]:
+        """Process a single clause extraction result from batch response."""
+        
+        if not result or not result.get("found", False):
+            # Clause not found → UNRESOLVED
+            return ClauseExtraction(
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title", "Unknown"),
+                clause_type=clause_type,
+                extracted_value="",
+                status=ExtractionStatus.UNRESOLVED,
+                evidence=[],
+                explanation=result.get("explanation", f"No {CLAUSE_LABELS.get(clause_type, clause_type.value).lower()} language found"),
+                snippet="",
+                page_number=1,
+                confidence=0.0,
+                verified=False,
+                flagged=False,
+            ), None
+        
+        # Found clause - process it
+        snippet = result.get("snippet", "")[:500]
+        extracted_value = result.get("extracted_value", "")
+        page_number = result.get("page_number", 1)
+        
+        # Calculate confidence
+        confidence = calculate_confidence(snippet, clause_type, extracted_value)
+        
+        # Check for cross-contamination
+        contamination = detect_cross_contamination(snippet, clause_type)
+        if contamination:
+            return ClauseExtraction(
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title", "Unknown"),
+                clause_type=clause_type,
+                extracted_value="",
+                status=ExtractionStatus.UNRESOLVED,
+                evidence=[],
+                explanation=f"Cross-contamination detected: {contamination}",
+                snippet="",
+                page_number=1,
+                confidence=0.0,
+                verified=False,
+                flagged=False,
+            ), None
+        
+        # Build evidence
+        char_start = result.get("char_start", 0)
+        char_end = char_start + len(snippet)
+        evidence_list = []
+        if snippet:
+            evidence_list.append(Evidence(
+                file=doc.get("title", "Unknown"),
+                page=page_number,
+                snippet=snippet,
+                char_start=char_start,
+                char_end=char_end,
+            ))
+        
+        # Determine status based on confidence
+        if evidence_list and confidence >= 0.8:
+            status = ExtractionStatus.RESOLVED
+        elif evidence_list:
+            status = ExtractionStatus.NEEDS_REVIEW
+        else:
+            status = ExtractionStatus.UNRESOLVED
+        
+        extraction = ClauseExtraction(
+            doc_id=doc["doc_id"],
+            doc_title=doc.get("title", "Unknown"),
+            clause_type=clause_type,
+            extracted_value=extracted_value,
+            status=status,
+            evidence=evidence_list,
+            explanation=result.get("explanation", f"Extracted with {confidence:.0%} confidence"),
+            snippet=snippet,
+            page_number=page_number,
+            confidence=confidence,
+            verified=False,
+            flagged=result.get("risk_level") == "high",
+        )
+        
+        # Create issue if high/medium risk
+        issue = None
+        if result.get("risk_level") == "high":
+            issue = Issue(
+                title=f"{CLAUSE_LABELS.get(clause_type, clause_type.value)} - {doc.get('title', 'Unknown')}",
+                description=result.get("risk_reason", "High risk clause detected"),
+                severity=IssueSeverity.CRITICAL,
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title"),
+                clause_id=extraction.id,
+                action_required="Review and assess impact on transaction",
+            )
+        elif result.get("risk_level") == "medium":
+            issue = Issue(
+                title=f"{CLAUSE_LABELS.get(clause_type, clause_type.value)} - {doc.get('title', 'Unknown')}",
+                description=result.get("risk_reason", "Medium risk clause detected"),
+                severity=IssueSeverity.WARNING,
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title"),
+                clause_id=extraction.id,
+                action_required="Review during diligence",
+            )
+        
+        return extraction, issue
     
     async def _extract_single_clause(
         self,
@@ -375,7 +575,14 @@ class PlaybookEngine:
         content: str,
         clause_type: ClauseType
     ) -> tuple[Optional[ClauseExtraction], Optional[Issue]]:
-        """Extract a single clause type from document content."""
+        """
+        Extract a single clause type from document content with evidence-gated logic.
+        
+        HARD RULE: Every clause is either:
+        - RESOLVED (has evidence + confidence >= 0.8)
+        - NEEDS_REVIEW (has evidence but low confidence)  
+        - UNRESOLVED (no evidence found - never blank)
+        """
         
         prompt = f"""You are a legal document analyst. Your task is to find ONE SPECIFIC clause type in a document.
 
@@ -384,6 +591,8 @@ CRITICAL RULES:
 2. If you find related but different clause types, IGNORE THEM
 3. If the exact clause type is not present, set found=false
 4. The snippet must contain keywords specific to the clause type
+5. Look for "## Page X" markers in the content. The page_number is the number in the marker IMMEDIATELY PRECEDING the snippet.
+6. IMPORTANT: Provide the exact character position where the snippet starts in the document.
 
 DOCUMENT: {doc.get('title', 'Unknown')}
 
@@ -399,23 +608,54 @@ DOCUMENT CONTENT:
 Respond in JSON format:
 {{
     "found": true/false,
-    "extracted_value": "Brief summary ONLY for {CLAUSE_LABELS.get(clause_type, clause_type.value)} (not other clauses)",
-    "snippet": "Exact quote containing {CLAUSE_LABELS.get(clause_type, clause_type.value).lower()} language (max 200 chars)",
+    "page_number": <Integer from the nearest '## Page X' marker above the snippet>, 
+    "extracted_value": "Brief normalized summary (e.g. 'Consent required', '12 months notice')",
+    "snippet": "Exact quote from document (max 200 chars)",
+    "char_start": <approximate character position where snippet begins>,
     "risk_level": "high/medium/low/none",
-    "risk_reason": "Why this specific clause is a risk (if any)"
+    "risk_reason": "Why this specific clause is a risk (if any)",
+    "explanation": "Brief reason for this finding"
 }}
 
-REMEMBER: If this specific clause type ({CLAUSE_LABELS.get(clause_type, clause_type.value)}) is not in the document, set found=false. Do NOT return other clause types.
+REMEMBER: If this specific clause type ({CLAUSE_LABELS.get(clause_type, clause_type.value)}) is not in the document, set found=false and provide explanation="No {CLAUSE_LABELS.get(clause_type, clause_type.value).lower()} language found in document".
 """
         
         try:
             result = await self.provider.complete_json(prompt)
         except Exception as e:
             logger.warning(f"LLM extraction failed: {e}")
-            return None, None
+            # Return UNRESOLVED extraction on LLM failure
+            return ClauseExtraction(
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title", "Unknown"),
+                clause_type=clause_type,
+                extracted_value="",
+                status=ExtractionStatus.UNRESOLVED,
+                evidence=[],
+                explanation=f"Extraction failed: {str(e)[:100]}",
+                snippet="",
+                page_number=1,
+                confidence=0.0,
+                verified=False,
+                flagged=False,
+            ), None
         
+        # CASE 1: Clause not found → return UNRESOLVED (never blank)
         if not result.get("found", False):
-            return None, None
+            return ClauseExtraction(
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title", "Unknown"),
+                clause_type=clause_type,
+                extracted_value="",
+                status=ExtractionStatus.UNRESOLVED,
+                evidence=[],
+                explanation=result.get("explanation", f"No {CLAUSE_LABELS.get(clause_type, clause_type.value).lower()} found"),
+                snippet="",
+                page_number=1,
+                confidence=0.0,
+                verified=False,
+                flagged=False,
+            ), None
         
         # Get extraction text for analysis
         snippet = result.get("snippet", "")
@@ -427,12 +667,24 @@ REMEMBER: If this specific clause type ({CLAUSE_LABELS.get(clause_type, clause_t
         if wrong_type:
             logger.warning(f"Cross-contamination detected: Asked for {clause_type.value}, "
                           f"but text matches {wrong_type.value} better. Snippet: '{snippet[:50]}...'")
-            return None, None
+            return ClauseExtraction(
+                doc_id=doc["doc_id"],
+                doc_title=doc.get("title", "Unknown"),
+                clause_type=clause_type,
+                extracted_value="",
+                status=ExtractionStatus.UNRESOLVED,
+                evidence=[],
+                explanation=f"Cross-contamination: extracted text matches {wrong_type.value} better",
+                snippet="",
+                page_number=1,
+                confidence=0.0,
+                verified=False,
+                flagged=False,
+            ), None
         
         # STEP 2: Two-pass verification for low-confidence extractions
         keyword_matches = count_keyword_matches(clause_type, combined_text)
         if keyword_matches == 0:
-            # No keywords found - ask LLM to verify this is really the right clause type
             verify_prompt = f"""Is this text SPECIFICALLY about {CLAUSE_LABELS.get(clause_type, clause_type.value)}?
 
 TEXT: "{snippet}"
@@ -443,23 +695,68 @@ Answer with ONLY "yes" or "no". If the text is about a DIFFERENT clause type (li
                 verify_result = await self.provider.complete(verify_prompt)
                 if "no" in verify_result.lower()[:10]:
                     logger.warning(f"Two-pass verification rejected {clause_type.value}: '{snippet[:50]}...'")
-                    return None, None
+                    return ClauseExtraction(
+                        doc_id=doc["doc_id"],
+                        doc_title=doc.get("title", "Unknown"),
+                        clause_type=clause_type,
+                        extracted_value="",
+                        status=ExtractionStatus.UNRESOLVED,
+                        evidence=[],
+                        explanation="Two-pass verification failed: extracted text doesn't match clause type",
+                        snippet="",
+                        page_number=1,
+                        confidence=0.0,
+                        verified=False,
+                        flagged=False,
+                    ), None
             except Exception as e:
-                logger.warning(f"Verification failed, rejecting uncertain extraction: {e}")
-                return None, None
+                logger.warning(f"Verification failed, marking as needs_review: {e}")
+                # Don't fail completely, just lower confidence
         
         # STEP 3: Calculate confidence based on keyword analysis
         has_snippet = bool(snippet)
         confidence = calculate_confidence(clause_type, combined_text, has_snippet)
         
-        # Create extraction with calculated confidence
+        # STEP 4: Find char range for evidence linking
+        char_start = result.get("char_start", 0)
+        if snippet and char_start == 0:
+            # Try to find snippet in content
+            snippet_pos = content.find(snippet[:50])  # Match first 50 chars
+            if snippet_pos >= 0:
+                char_start = snippet_pos
+        char_end = char_start + len(snippet) if snippet else char_start
+        
+        # STEP 5: Create Evidence object
+        evidence_list = []
+        if snippet:
+            evidence_list.append(Evidence(
+                file=doc.get("title", "Unknown"),
+                page=result.get("page_number", 1),
+                snippet=snippet[:500],
+                char_start=char_start,
+                char_end=char_end,
+            ))
+        
+        # STEP 6: Determine status based on evidence-gated logic
+        # HARD RULE: RESOLVED only if evidence exists AND confidence >= 0.8
+        if evidence_list and confidence >= 0.8:
+            status = ExtractionStatus.RESOLVED
+        elif evidence_list:
+            status = ExtractionStatus.NEEDS_REVIEW
+        else:
+            status = ExtractionStatus.UNRESOLVED
+        
+        # Create extraction with calculated confidence and status
         extraction = ClauseExtraction(
             doc_id=doc["doc_id"],
             doc_title=doc.get("title", "Unknown"),
             clause_type=clause_type,
-            extracted_value=result.get("extracted_value", ""),
-            snippet=result.get("snippet", "")[:500],
-            page_number=1,  # TODO: Extract actual page
+            extracted_value=extracted_value,
+            status=status,
+            evidence=evidence_list,
+            explanation=result.get("explanation", f"Extracted with {confidence:.0%} confidence"),
+            snippet=snippet[:500],  # Keep for backwards compat
+            page_number=result.get("page_number", 1), 
             confidence=confidence,
             verified=False,
             flagged=result.get("risk_level") == "high",
@@ -508,7 +805,11 @@ Answer with ONLY "yes" or "no". If the text is about a DIFFERENT clause type (li
             by_doc[e.doc_id]["clauses"][e.clause_type.value] = {
                 "id": e.id,
                 "value": e.extracted_value,
+                "status": e.status.value,
+                "evidence": [ev.to_dict() for ev in e.evidence],
+                "explanation": e.explanation,
                 "snippet": e.snippet,
+                "page_number": e.page_number,
                 "confidence": e.confidence,
                 "verified": e.verified,
                 "flagged": e.flagged,

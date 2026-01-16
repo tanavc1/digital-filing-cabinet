@@ -1584,6 +1584,79 @@ async def get_clause_matrix(workspace_id: str = DEFAULT_WORKSPACE_ID):
     matrix = playbook_engine.build_matrix(relevant_clauses)
     return matrix
 
+
+@app.get("/playbooks/{playbook_id}/coverage")
+async def get_playbook_coverage(playbook_id: str, workspace_id: str = DEFAULT_WORKSPACE_ID):
+    """
+    Get coverage report for a playbook run.
+    
+    Returns:
+        - resolved_pct: Percentage of clauses with RESOLVED status
+        - resolved_count: Count of resolved clauses
+        - needs_review_count: Count of clauses needing human review
+        - unresolved_count: Count of unresolved clauses
+        - unresolved_list: Details of each unresolved clause
+        - needs_review_list: Details of each needs_review clause
+    """
+    from models.clause import ExtractionStatus
+    
+    engine = get_engine()
+    docs = engine.store.list_documents(workspace_id)
+    doc_ids = {d["doc_id"] for d in docs}
+    
+    # Filter clauses for this workspace
+    relevant_clauses = [c for c in _clauses.values() if c.doc_id in doc_ids]
+    
+    if not relevant_clauses:
+        return {
+            "playbook_id": playbook_id,
+            "workspace_id": workspace_id,
+            "total_clauses": 0,
+            "resolved_pct": 0,
+            "resolved_count": 0,
+            "needs_review_count": 0,
+            "unresolved_count": 0,
+            "unresolved_list": [],
+            "needs_review_list": [],
+        }
+    
+    # Categorize by status
+    resolved = [c for c in relevant_clauses if c.status == ExtractionStatus.RESOLVED]
+    needs_review = [c for c in relevant_clauses if c.status == ExtractionStatus.NEEDS_REVIEW]
+    unresolved = [c for c in relevant_clauses if c.status == ExtractionStatus.UNRESOLVED]
+    
+    total = len(relevant_clauses)
+    resolved_pct = (len(resolved) / total * 100) if total > 0 else 0
+    
+    return {
+        "playbook_id": playbook_id,
+        "workspace_id": workspace_id,
+        "total_clauses": total,
+        "resolved_pct": round(resolved_pct, 1),
+        "resolved_count": len(resolved),
+        "needs_review_count": len(needs_review),
+        "unresolved_count": len(unresolved),
+        "unresolved_list": [
+            {
+                "doc_id": c.doc_id,
+                "doc_title": c.doc_title,
+                "clause_type": c.clause_type.value,
+                "explanation": c.explanation,
+            }
+            for c in unresolved
+        ],
+        "needs_review_list": [
+            {
+                "doc_id": c.doc_id,
+                "doc_title": c.doc_title,
+                "clause_type": c.clause_type.value,
+                "confidence": c.confidence,
+                "explanation": c.explanation,
+            }
+            for c in needs_review
+        ],
+    }
+
 @app.delete("/clauses")
 async def clear_all_clauses(workspace_id: str = DEFAULT_WORKSPACE_ID):
     """Clear all clause extractions to allow re-running with improved prompts."""
@@ -1890,9 +1963,12 @@ async def export_excel(export_type: str, workspace_id: str = DEFAULT_WORKSPACE_I
     
     if export_type == "clause_matrix":
         ws.title = "Clause Matrix"
-        # Headers
+        # Headers: Document + (Value, Status, Evidence) for each clause type
         all_types = sorted(CLAUSE_LABELS.keys(), key=lambda k: k.value)
-        headers = ["Document Name"] + [CLAUSE_LABELS[t] for t in all_types]
+        headers = ["Document Name"]
+        for t in all_types:
+            label = CLAUSE_LABELS[t]
+            headers.extend([f"{label} Value", f"{label} Status", f"{label} Evidence"])
         ws.append(headers)
         
         # Style headers
@@ -1905,16 +1981,33 @@ async def export_excel(export_type: str, workspace_id: str = DEFAULT_WORKSPACE_I
         docs = engine.store.list_documents(workspace_id)
         doc_map = {d["doc_id"]: d.get("title", "Unknown") for d in docs}
         
-        # Group clauses
+        # Group clauses by doc
         by_doc = {d_id: {} for d_id in doc_map}
         for c in _clauses.values():
             if c.doc_id in by_doc:
-                by_doc[c.doc_id][c.clause_type] = c.extracted_value
+                # Build evidence citation
+                evidence_citation = ""
+                if hasattr(c, 'evidence') and c.evidence:
+                    ev = c.evidence[0]
+                    evidence_citation = f"p.{ev.page}: \"{ev.snippet[:50]}...\""
+                elif c.snippet:
+                    evidence_citation = f"p.{c.page_number}: \"{c.snippet[:50]}...\""
+                
+                by_doc[c.doc_id][c.clause_type] = {
+                    "value": c.extracted_value,
+                    "status": c.status.value if hasattr(c, 'status') else "unknown",
+                    "evidence": evidence_citation,
+                }
         
         for doc_id, title in doc_map.items():
             row = [title]
             for t in all_types:
-                row.append(by_doc[doc_id].get(t, ""))
+                clause_data = by_doc[doc_id].get(t, {})
+                row.extend([
+                    clause_data.get("value", ""),
+                    clause_data.get("status", ""),
+                    clause_data.get("evidence", ""),
+                ])
             ws.append(row)
             
     elif export_type == "issues_list":

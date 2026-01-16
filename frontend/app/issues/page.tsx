@@ -175,6 +175,8 @@ export default function IssuesPage() {
                                 <TableHead className="w-12"></TableHead>
                                 <TableHead>Issue</TableHead>
                                 <TableHead>Document</TableHead>
+                                <TableHead>Clause Type</TableHead>
+                                <TableHead>Evidence Citation</TableHead>
                                 <TableHead>Owner</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Action Required</TableHead>
@@ -206,6 +208,24 @@ export default function IssuesPage() {
                                                 {issue.doc_title || "View"}
                                                 <ExternalLink className="h-3 w-3" />
                                             </Link>
+                                        ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        {issue.clause_id ? (
+                                            <Badge variant="outline" className="text-xs">
+                                                {issue.title.split(" - ")[0] || "Unknown"}
+                                            </Badge>
+                                        ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        {issue.description ? (
+                                            <div className="text-xs text-muted-foreground max-w-[200px] truncate italic">
+                                                "{issue.description.slice(0, 80)}..."
+                                            </div>
                                         ) : (
                                             <span className="text-muted-foreground">—</span>
                                         )}

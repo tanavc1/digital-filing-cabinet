@@ -31,13 +31,25 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+interface Evidence {
+    file: string;
+    page: number;
+    snippet: string;
+    char_start: number;
+    char_end: number;
+}
+
 interface MatrixRow {
     doc_id: string;
     doc_title: string;
     clauses: Record<string, {
         id: string;
         value: string;
+        status: "resolved" | "needs_review" | "unresolved" | "not_applicable";
+        evidence: Evidence[];
+        explanation: string;
         snippet: string;
+        page_number: number;
         confidence: number;
         verified: boolean;
         flagged: boolean;
@@ -108,9 +120,40 @@ export default function ClauseMatrixPage() {
 
     function getCellStyle(cell: any) {
         if (!cell) return "bg-gray-50 text-gray-400";
-        if (cell.flagged) return "bg-red-50 text-red-800 border-l-4 border-red-500";
-        if (cell.verified) return "bg-green-50 text-green-800";
-        return "bg-white";
+
+        // Status-based styling for defensible cells
+        switch (cell.status) {
+            case "resolved":
+                return cell.flagged
+                    ? "bg-red-50 text-red-800 border-l-4 border-red-500"
+                    : "bg-green-50 text-green-800";
+            case "needs_review":
+                return "bg-amber-50 text-amber-800 border-l-4 border-amber-400";
+            case "unresolved":
+                return "bg-slate-100 text-slate-600";
+            case "not_applicable":
+                return "bg-gray-50 text-gray-400";
+            default:
+                // Legacy fallback
+                if (cell.flagged) return "bg-red-50 text-red-800 border-l-4 border-red-500";
+                if (cell.verified) return "bg-green-50 text-green-800";
+                return "bg-white";
+        }
+    }
+
+    function getStatusBadge(status: string) {
+        switch (status) {
+            case "resolved":
+                return <span title="Resolved">✅</span>;
+            case "needs_review":
+                return <span title="Needs Review">⚠️</span>;
+            case "unresolved":
+                return <span title="Unresolved">❓</span>;
+            case "not_applicable":
+                return <span title="Not Applicable">➖</span>;
+            default:
+                return null;
+        }
     }
 
     if (loading && !matrix) {
@@ -235,21 +278,30 @@ export default function ClauseMatrixPage() {
                                                         {cell ? (
                                                             <Link
                                                                 href={`/evidence/${cell.id}`}
-                                                                className="block p-2 hover:bg-gray-100 rounded cursor-pointer"
+                                                                className="block p-2 hover:bg-gray-100/50 rounded cursor-pointer"
                                                             >
+                                                                <div className="flex items-center justify-center gap-1 mb-1">
+                                                                    {getStatusBadge(cell.status)}
+                                                                    {cell.flagged && <AlertTriangle className="h-3 w-3 text-red-500" />}
+                                                                </div>
                                                                 <div className="text-xs max-w-[140px] truncate">
-                                                                    {cell.value || "Found"}
+                                                                    {cell.status === "resolved" || cell.status === "needs_review"
+                                                                        ? (cell.value || "Found")
+                                                                        : cell.explanation || "N/A"
+                                                                    }
                                                                 </div>
                                                                 <div className="flex items-center justify-center gap-1 mt-1">
                                                                     {cell.verified && <CheckCircle className="h-3 w-3 text-green-500" />}
-                                                                    {cell.flagged && <AlertTriangle className="h-3 w-3 text-red-500" />}
                                                                     <span className="text-[10px] text-muted-foreground">
-                                                                        {Math.round(cell.confidence * 100)}%
+                                                                        {cell.status === "resolved" || cell.status === "needs_review"
+                                                                            ? `${Math.round(cell.confidence * 100)}%`
+                                                                            : ""
+                                                                        }
                                                                     </span>
                                                                 </div>
                                                             </Link>
                                                         ) : (
-                                                            <span className="text-gray-300">—</span>
+                                                            <span className="text-gray-300" title="No extraction data">—</span>
                                                         )}
                                                     </TableCell>
                                                 );

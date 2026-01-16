@@ -177,7 +177,7 @@ export default function EvidencePage() {
                         </CardHeader>
                         <CardContent>
                             <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
-                                <p className="text-lg font-medium text-indigo-900">
+                                <p className="text-lg font-medium text-indigo-900 break-words">
                                     {clause.extracted_value || "No value extracted"}
                                 </p>
                             </div>
@@ -193,7 +193,7 @@ export default function EvidencePage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-700 bg-gray-50 p-4 rounded-r-lg">
+                            <blockquote className="border-l-4 border-gray-300 pl-4 italic text-gray-700 bg-gray-50 p-4 rounded-r-lg break-words">
                                 "{clause.snippet}"
                             </blockquote>
                         </CardContent>

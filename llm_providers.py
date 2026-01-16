@@ -158,7 +158,7 @@ class OllamaProvider(LLMProvider):
         timeout: float = 120.0
     ):
         self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
-        self._model = model or os.getenv("OLLAMA_MODEL", "llama3:8b")
+        self._model = model or os.getenv("OLLAMA_MODEL", "phi4-mini")
         self.timeout = timeout
         
         logger.info(f"Ollama provider initialized: {self.host} with model: {self._model}")

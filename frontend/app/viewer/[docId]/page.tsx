@@ -80,8 +80,8 @@ export default function ViewerPage() {
             {/* Split View */}
             <div className="flex-1 flex overflow-hidden">
                 {/* Left Panel: Document */}
-                <div className="flex-1 bg-gray-100 overflow-auto relative flex justify-center p-8">
-                    <div className="bg-white shadow-lg min-h-full w-full max-w-4xl p-12 ">
+                <div className="flex-1 bg-gray-100 overflow-auto relative flex justify-center p-4">
+                    <div className="bg-white shadow-lg w-full max-w-4xl rounded-lg">
                         {loading ? (
                             <div className="flex items-center justify-center h-64">
                                 <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -121,7 +121,7 @@ export default function ViewerPage() {
                                             </div>
                                         </CardHeader>
                                         <CardContent className="p-3 pt-2 text-sm">
-                                            <p className="font-medium text-gray-900 mb-1">{clause.extracted_value}</p>
+                                            <p className="font-medium text-gray-900 mb-1 break-words">{clause.extracted_value}</p>
                                             <p className="text-gray-500 line-clamp-3 text-xs italic">
                                                 "{clause.snippet}"
                                             </p>

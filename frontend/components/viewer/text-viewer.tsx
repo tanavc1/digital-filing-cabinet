@@ -46,7 +46,7 @@ export function TextViewer({ text, highlight }: TextViewerProps) {
     }, [text, highlight]);
 
     return (
-        <div className="bg-white p-8 min-h-screen font-mono text-sm leading-relaxed whitespace-pre-wrap text-gray-800">
+        <div className="bg-white p-6 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words max-w-full text-gray-800">
             {content}
         </div>
     );

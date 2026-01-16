@@ -125,6 +125,20 @@ export const deleteDocument = async (docId: string, workspaceId: string): Promis
     return res.data;
 };
 
+export const getDocument = async (docId: string, workspaceId: string): Promise<any> => {
+    const res = await api.get(`/documents/${docId}`, {
+        params: { workspace_id: workspaceId }
+    });
+    return res.data;
+};
+
+export const getDocumentContent = async (docId: string, workspaceId: string): Promise<{ content: string }> => {
+    const res = await api.get(`/documents/${docId}/content`, {
+        params: { workspace_id: workspaceId }
+    });
+    return res.data;
+};
+
 // ----------------------------
 // Audit API
 // ----------------------------

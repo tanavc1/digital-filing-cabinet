@@ -25,6 +25,48 @@ class ClauseType(str, Enum):
     IP_LICENSE = "ip_license"
 
 
+class ExtractionStatus(str, Enum):
+    """Status of a clause extraction - enforces evidence-gated logic."""
+    RESOLVED = "resolved"           # Has evidence + confidence >= 0.8
+    NEEDS_REVIEW = "needs_review"   # Has evidence but low confidence
+    UNRESOLVED = "unresolved"       # No evidence found in document
+    NOT_APPLICABLE = "not_applicable"  # Doc type doesn't match playbook
+
+
+@dataclass
+class Evidence:
+    """Evidence citation linking extraction to source document."""
+    file: str
+    page: int
+    snippet: str
+    char_start: int
+    char_end: int
+    
+    def to_dict(self) -> dict:
+        return {
+            "file": self.file,
+            "page": self.page,
+            "snippet": self.snippet,
+            "char_start": self.char_start,
+            "char_end": self.char_end,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "Evidence":
+        return cls(
+            file=data.get("file", ""),
+            page=data.get("page", 1),
+            snippet=data.get("snippet", ""),
+            char_start=data.get("char_start", 0),
+            char_end=data.get("char_end", 0),
+        )
+    
+    def to_citation(self) -> str:
+        """Format as human-readable citation."""
+        snippet_preview = self.snippet[:50] + "..." if len(self.snippet) > 50 else self.snippet
+        return f"{self.file}, p.{self.page}: \"{snippet_preview}\""
+
+
 CLAUSE_LABELS = {
     ClauseType.ASSIGNMENT_CONSENT: "Assignment/Consent",
     ClauseType.CHANGE_OF_CONTROL: "Change of Control",
@@ -41,13 +83,16 @@ CLAUSE_LABELS = {
 
 @dataclass
 class ClauseExtraction:
-    """A single extracted clause from a document."""
+    """A single extracted clause from a document with evidence-gated logic."""
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     doc_id: str = ""
     doc_title: str = ""
     clause_type: ClauseType = ClauseType.ASSIGNMENT_CONSENT
-    extracted_value: str = ""  # The key finding (e.g., "Consent required")
-    snippet: str = ""          # Full text snippet containing the clause
+    extracted_value: str = ""  # Normalized value (e.g., "Consent required")
+    status: ExtractionStatus = ExtractionStatus.UNRESOLVED  # NEW: Evidence-gated status
+    evidence: List[Evidence] = field(default_factory=list)  # NEW: Replaces snippet
+    explanation: str = ""  # NEW: Why this status (e.g., "No assignment clause found")
+    snippet: str = ""      # DEPRECATED: Keep for backwards compatibility
     page_number: int = 1
     confidence: float = 0.0
     verified: bool = False
@@ -61,7 +106,10 @@ class ClauseExtraction:
             "doc_title": self.doc_title,
             "clause_type": self.clause_type.value,
             "extracted_value": self.extracted_value,
-            "snippet": self.snippet,
+            "status": self.status.value,
+            "evidence": [e.to_dict() for e in self.evidence],
+            "explanation": self.explanation,
+            "snippet": self.snippet,  # Keep for backwards compat
             "page_number": self.page_number,
             "confidence": self.confidence,
             "verified": self.verified,
@@ -71,12 +119,16 @@ class ClauseExtraction:
     
     @classmethod
     def from_dict(cls, data: dict) -> "ClauseExtraction":
+        evidence_list = [Evidence.from_dict(e) for e in data.get("evidence", [])]
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             doc_id=data["doc_id"],
             doc_title=data.get("doc_title", ""),
             clause_type=ClauseType(data["clause_type"]),
             extracted_value=data.get("extracted_value", ""),
+            status=ExtractionStatus(data.get("status", "unresolved")),
+            evidence=evidence_list,
+            explanation=data.get("explanation", ""),
             snippet=data.get("snippet", ""),
             page_number=data.get("page_number", 1),
             confidence=data.get("confidence", 0.0),
