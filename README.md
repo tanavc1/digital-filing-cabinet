@@ -1,5 +1,9 @@
 # 📁 Digital Filing Cabinet
 
+
+https://github.com/user-attachments/assets/153a7e74-f413-4094-b759-13a088a69479
+
+
 **Your intelligent, multi-modal knowledge base.**
 
 The Digital Filing Cabinet is a powerful RAG (Retrieval-Augmented Generation) system that turns your documents—text, PDFs, and *images*—into a searchable, conversational knowledge base. It combines state-of-the-art vector search with traditional keyword search to answer complex questions instantly.
@@ -90,4 +94,3 @@ python verify_vision.py
 -   **Rate Limiting**: Query endpoint limited to 10 req/min/user.
 
 ---
-*Built with ❤️ by Antigravity*
