@@ -1355,27 +1355,37 @@ async def generate_schedule(request: ScheduleRequest):
 class ModeStatus(BaseModel):
     offline_mode: bool
     llm_provider: str
+    vision_provider: str
     ollama_available: bool
     ollama_host: str
+    llm_model: str
+    vision_model: str
+    embed_model: str
+    rerank_model: str
 
 @app.get("/settings/mode", response_model=ModeStatus)
 async def get_mode_status():
-    """Get current offline/online mode status."""
+    """Get current mode status including all model names."""
     import os
     ollama_available = await check_ollama_available()
     
     return ModeStatus(
         offline_mode=is_offline_mode(),
         llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
+        vision_provider=os.getenv("VISION_PROVIDER", "ollama"),
         ollama_available=ollama_available,
-        ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434"),
+        llm_model=os.getenv("OLLAMA_MODEL", "phi4-mini") if os.getenv("LLM_PROVIDER", "ollama") == "ollama" else os.getenv("OPENAI_MODEL_ID", "gpt-4o"),
+        vision_model=os.getenv("OLLAMA_VISION_MODEL", "qwen3-vl:8b") if os.getenv("VISION_PROVIDER", "ollama") == "ollama" else os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash"),
+        embed_model=os.getenv("EMBED_MODEL_NAME", "BAAI/bge-small-en-v1.5"),
+        rerank_model=os.getenv("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
     )
 
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
     import os
-    return {"status": "ok", "provider": os.getenv("LLM_PROVIDER", "unknown")}
+    return {"status": "ok", "provider": os.getenv("LLM_PROVIDER", "ollama")}
 
 @app.get("/project/stats")
 async def get_project_stats(workspace_id: str = DEFAULT_WORKSPACE_ID):
@@ -1425,6 +1435,7 @@ async def set_mode(offline: bool = True):
     os.environ["OFFLINE_MODE"] = "true" if offline else "false"
     if offline:
         os.environ["LLM_PROVIDER"] = "ollama"
+        os.environ["VISION_PROVIDER"] = "ollama"
     return {"offline_mode": offline, "message": "Mode updated. Restart recommended for full effect."}
 
 
