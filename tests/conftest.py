@@ -16,6 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("API_SECRET", "test-api-secret")
 os.environ.setdefault("ADMIN_PASSWORD", "test-admin-password")
 
+# Configure pytest-asyncio
+pytest_plugins = ('pytest_asyncio',)
+
 
 @pytest.fixture(scope="session")
 def openai_available():
@@ -37,6 +40,9 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "slow: marks tests as slow running"
+    )
+    config.addinivalue_line(
+        "markers", "asyncio: marks tests as async (for pytest-asyncio)"
     )
 
 

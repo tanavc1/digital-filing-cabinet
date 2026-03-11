@@ -96,10 +96,6 @@ const TreeNodeView = ({ node, level, onSelect, selectedId }: { node: TreeNode, l
             >
                 <FileIconByType doc={node.doc} />
                 <span className="ml-2 truncate flex-1">{node.name}</span>
-                <span className="text-[10px] text-gray-400 ml-2 border px-1 rounded bg-white">
-                    {node.doc.doc_type || "??"}
-                </span>
-                <RiskBadge level={node.doc.risk_level} />
             </div>
         );
     }
@@ -116,7 +112,7 @@ const TreeNodeView = ({ node, level, onSelect, selectedId }: { node: TreeNode, l
                 ) : <span className="w-5" />}
 
                 <Folder className="w-4 h-4 text-blue-300 mr-2 fill-blue-50" />
-                <span className="truncate">{node.name === "root" ? "Data Room" : node.name}</span>
+                <span className="truncate">{node.name === "root" ? "Documents" : node.name}</span>
             </div>
             {isOpen && (
                 <div>
@@ -145,7 +141,7 @@ export function FileTree({ docs, onSelectDoc, selectedDocId }: FileTreeProps) {
     const root = useMemo(() => buildTree(docs), [docs]);
 
     if (!docs || docs.length === 0) {
-        return <div className="text-gray-400 text-sm p-4 text-center">Data Deal Room is empty.</div>;
+        return <div className="text-gray-400 text-sm p-4 text-center">No documents yet. Upload files to get started.</div>;
     }
 
     return (

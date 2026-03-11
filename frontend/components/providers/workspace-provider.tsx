@@ -28,6 +28,7 @@ interface WorkspaceContextType {
     workspaces: Workspace[];
     availableWorkspaces: Workspace[]; // Backward compat
     docs: Doc[];
+    docsLoaded: boolean;  // True after initial docs fetch completes
     refreshDocs: () => Promise<void>;
     workspaceCounts: Record<string, number>;
     uploadStatus: { isUploading: boolean; fileName?: string };
@@ -39,6 +40,7 @@ const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefin
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const [workspace, setWorkspace] = useState<Workspace>(WORKSPACES[0]);
     const [docs, setDocs] = useState<Doc[]>([]);
+    const [docsLoaded, setDocsLoaded] = useState(false);  // Tracks if initial load completed
     const [workspaceCounts, setWorkspaceCounts] = useState<Record<string, number>>({});
     const [uploadStatus, setUploadStatus] = useState<{ isUploading: boolean; fileName?: string }>({ isUploading: false });
 
@@ -89,6 +91,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         } catch (e) {
             console.error("Failed to load docs", e);
             setDocs([]);
+        } finally {
+            setDocsLoaded(true);  // Mark initial load as complete
         }
     };
 
@@ -113,6 +117,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
                 workspaces: WORKSPACES,
                 availableWorkspaces: WORKSPACES, // Backward compat
                 docs,
+                docsLoaded,
                 refreshDocs,
                 workspaceCounts,
                 uploadStatus,

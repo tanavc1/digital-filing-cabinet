@@ -160,7 +160,11 @@ class OllamaProvider(LLMProvider):
         self.host = host or os.getenv("OLLAMA_HOST", "http://localhost:11434")
         self._model = model or os.getenv("OLLAMA_MODEL", "phi4-mini")
         self.timeout = timeout
-        
+        # Persistent client with connection pooling for keep-alive
+        self._client = httpx.AsyncClient(
+            timeout=timeout,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
         logger.info(f"Ollama provider initialized: {self.host} with model: {self._model}")
     
     @property
@@ -172,31 +176,30 @@ class OllamaProvider(LLMProvider):
         prompt: str,
         system: Optional[str] = None,
         temperature: float = 0.1,
-        max_tokens: int = 2000
+        max_tokens: int = 4000
     ) -> str:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            payload = {
-                "model": self._model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens
-                }
+        payload = {
+            "model": self._model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens
             }
-            if system:
-                payload["system"] = system
-            
-            try:
-                resp = await client.post(
-                    f"{self.host}/api/generate",
-                    json=payload
-                )
-                resp.raise_for_status()
-                return resp.json()["response"].strip()
-            except httpx.HTTPError as e:
-                logger.error(f"Ollama request failed: {e}")
-                raise RuntimeError(f"Ollama API error: {e}")
+        }
+        if system:
+            payload["system"] = system
+
+        try:
+            resp = await self._client.post(
+                f"{self.host}/api/generate",
+                json=payload
+            )
+            resp.raise_for_status()
+            return resp.json()["response"].strip()
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama request failed: {e}")
+            raise RuntimeError(f"Ollama API error: {e}")
     
     async def complete_json(
         self,
@@ -214,14 +217,29 @@ class OllamaProvider(LLMProvider):
         )
         
         # Clean up common JSON wrapper issues
+        raw = raw.strip()
         if raw.startswith("```json"):
             raw = raw[7:]
         if raw.startswith("```"):
             raw = raw[3:]
         if raw.endswith("```"):
             raw = raw[:-3]
+        raw = raw.strip()
         
-        return json.loads(raw.strip())
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}. Raw response: {raw[:200]}...")
+            # Try to extract JSON from the response
+            import re
+            json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+            # Return a safe default structure
+            raise ValueError(f"Failed to parse JSON response: {e}")
     
     async def stream(
         self,
@@ -229,31 +247,30 @@ class OllamaProvider(LLMProvider):
         system: Optional[str] = None,
         temperature: float = 0.7
     ) -> AsyncIterator[str]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            payload = {
-                "model": self._model,
-                "prompt": prompt,
-                "stream": True,
-                "options": {
-                    "temperature": temperature
-                }
+        payload = {
+            "model": self._model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "temperature": temperature
             }
-            if system:
-                payload["system"] = system
-            
-            async with client.stream(
-                "POST",
-                f"{self.host}/api/generate",
-                json=payload
-            ) as resp:
-                async for line in resp.aiter_lines():
-                    if line:
-                        try:
-                            data = json.loads(line)
-                            if "response" in data:
-                                yield data["response"]
-                        except json.JSONDecodeError:
-                            continue
+        }
+        if system:
+            payload["system"] = system
+
+        async with self._client.stream(
+            "POST",
+            f"{self.host}/api/generate",
+            json=payload
+        ) as resp:
+            async for line in resp.aiter_lines():
+                if line:
+                    try:
+                        data = json.loads(line)
+                        if "response" in data:
+                            yield data["response"]
+                    except json.JSONDecodeError:
+                        continue
 
 
 def is_offline_mode() -> bool:
@@ -282,7 +299,7 @@ def get_llm_provider(
         logger.info("OFFLINE_MODE enabled - using local Ollama")
         return OllamaProvider(**kwargs)
     
-    provider_type = provider_type or os.getenv("LLM_PROVIDER", "openai")
+    provider_type = provider_type or os.getenv("LLM_PROVIDER", "ollama")
     provider_type = provider_type.lower().strip()
     
     if provider_type == "ollama":

@@ -46,11 +46,12 @@ EXTRACT_EVIDENCE_BATCHED_SYSTEM = (
     "Rules:\n"
     "1. Output valid JSON only.\n"
     "2. Format: { \"evidence\": [ { \"doc_id\": \"...\", \"quote\": \"...\" } ], \"explanation\": \"...\" }\n"
-    "3. INCLUDE CONTEXT: If the answer appears under a header or section title, INCLUDE that header in the quote.\n"
-    "4. Extract LARGER BLOCKS with context rather than isolated phrases.\n"
+    "3. CONTEXT STRATEGY: You MUST capture the Identity (Header). If the Header is far from the answer, use '...' (three dots) to connect them (e.g. 'CTO - Michael Chang ... Severance: 9 months').\n"
+    "4. Do not just extract the number (e.g. '$100k'). Extract 'Salary: $100k' including the label.\n"
     "5. If multiple sources have the answer, extract from all.\n"
     "6. If NO information is found, return empty list and explanation.\n"
-    "7. The quote MUST be an exact substring from the source text."
+    "7. The quote parts MUST be exact substrings from the source text.\n"
+    "8. ENTITY LINKING: When extracting terms for a person/role, ensure you have captured their Name/Role."
 )
 
 SYNTHESIZE_ANSWER_SYSTEM = """You are a precise answer generator for a verifiable RAG system.

@@ -8,13 +8,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 password: { label: "Password", type: "password" },
             },
             authorize: async (credentials) => {
-                // Simple admin password check
-                // In production, use a hash match (bcrypt) or external DB
-                const pw = process.env.ADMIN_PASSWORD || "admin"
+                // Admin password must be set via ADMIN_PASSWORD env var
+                const pw = process.env.ADMIN_PASSWORD
+                if (!pw) {
+                    console.error("ADMIN_PASSWORD env var not set — login disabled")
+                    return null
+                }
 
                 if (credentials.password === pw) {
-                    // Return a user object
-                    return { id: "1", name: "Admin User", email: "admin@example.com" }
+                    return { id: "1", name: "Admin User", email: "admin@local" }
                 }
 
                 // Return null if validation fails

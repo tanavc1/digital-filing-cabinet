@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useWorkspace } from "@/components/providers/workspace-provider";
-import { listDocs, deleteDocument } from "@/lib/api";
+import { listDocs, deleteDocument, getDocContent } from "@/lib/api";
 import { Doc } from "@/lib/types";
 import { UploadButton } from "@/components/docs/upload-button";
 import { ZipUploadButton } from "@/components/docs/zip-upload-button";
-import { Loader2, FileText, AlertTriangle, ShieldCheck, Tag, Trash2, Eye } from "lucide-react";
+import { Loader2, FileText, Trash2, Search, FolderOpen, Calendar, Clock } from "lucide-react";
 import { FileTree } from "@/components/ui/file-tree";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -19,6 +19,8 @@ export default function DocumentsPage() {
     const [docs, setDocs] = useState<Doc[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedDoc, setSelectedDoc] = useState<Doc | null>(null);
+    const [docContent, setDocContent] = useState<string>("");
+    const [loadingContent, setLoadingContent] = useState(false);
 
     const fetchDocs = async () => {
         setLoading(true);
@@ -38,6 +40,7 @@ export default function DocumentsPage() {
         try {
             await deleteDocument(docId, workspace.id);
             setSelectedDoc(null);
+            setDocContent("");
             await fetchDocs();
         } catch (err) {
             console.error("Delete failed:", err);
@@ -45,28 +48,39 @@ export default function DocumentsPage() {
         }
     };
 
+    const loadDocContent = async (doc: Doc) => {
+        setLoadingContent(true);
+        try {
+            const res = await getDocContent(doc.doc_id, workspace.id);
+            setDocContent(res.text || "");
+        } catch (err) {
+            console.error("Failed to load content:", err);
+            setDocContent("Failed to load document content.");
+        } finally {
+            setLoadingContent(false);
+        }
+    };
+
     useEffect(() => {
         fetchDocs();
     }, [workspace.id]);
 
-    const getRiskColor = (level?: string) => {
-        switch (level) {
-            case "High": return "destructive";
-            case "Medium": return "warning"; // Need to ensure variant exists or use custom className
-            case "Low": return "secondary";
-            case "Clean": return "success"; // Need variant
-            default: return "outline";
+    useEffect(() => {
+        if (selectedDoc) {
+            loadDocContent(selectedDoc);
+        } else {
+            setDocContent("");
         }
-    };
+    }, [selectedDoc]);
 
     return (
         <div className="flex flex-col h-screen bg-gray-50 overflow-hidden">
             {/* Header */}
             <header className="bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm flex-shrink-0">
                 <div>
-                    <h1 className="text-xl font-bold text-gray-900">Virtual Data Room</h1>
+                    <h1 className="text-xl font-bold text-gray-900">Document Library</h1>
                     <p className="text-xs text-gray-500">
-                        {workspace.label} • {docs.length} Documents
+                        {workspace.label} • {docs.length} document{docs.length !== 1 ? 's' : ''}
                     </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -81,13 +95,19 @@ export default function DocumentsPage() {
                 <div className="w-1/3 min-w-[300px] border-r bg-white flex flex-col">
                     <div className="p-3 border-b bg-gray-50/50">
                         <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                            Directory
+                            Files
                         </h2>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2">
                         {loading ? (
                             <div className="flex justify-center p-8">
                                 <Loader2 className="w-6 h-6 animate-spin text-gray-300" />
+                            </div>
+                        ) : docs.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center p-8 text-gray-400">
+                                <FolderOpen className="w-12 h-12 mb-3 stroke-1" />
+                                <p className="text-sm">No documents yet</p>
+                                <p className="text-xs">Upload files to get started</p>
                             </div>
                         ) : (
                             <FileTree
@@ -99,92 +119,76 @@ export default function DocumentsPage() {
                     </div>
                 </div>
 
-                {/* Right: Document Detils */}
-                <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
+                {/* Right: Document Preview */}
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
                     {selectedDoc ? (
-                        <div className="max-w-3xl mx-auto space-y-6">
-
-                            {/* Title Card */}
+                        <div className="max-w-4xl mx-auto space-y-4">
+                            {/* Document Header */}
                             <Card>
-                                <CardHeader>
+                                <CardHeader className="pb-3">
                                     <div className="flex items-start justify-between">
                                         <div className="space-y-1">
-                                            <CardTitle className="text-xl flex items-center gap-2">
-                                                <FileText className="w-5 h-5 text-blue-600" />
+                                            <CardTitle className="text-lg flex items-center gap-2">
+                                                <FileText className="w-5 h-5 text-indigo-500" />
                                                 {selectedDoc.title}
                                             </CardTitle>
-                                            <CardDescription className="text-xs font-mono text-gray-400">
-                                                ID: {selectedDoc.doc_id}
-                                            </CardDescription>
+                                            <div className="flex items-center gap-4 text-xs text-gray-500">
+                                                <span className="flex items-center gap-1">
+                                                    <Calendar className="w-3 h-3" />
+                                                    {format(new Date(selectedDoc.created_at * 1000), "MMM d, yyyy")}
+                                                </span>
+                                                <span className="flex items-center gap-1">
+                                                    <FolderOpen className="w-3 h-3" />
+                                                    {selectedDoc.folder_path || "/"}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <Badge variant="outline" className="text-xs">
-                                            {format(new Date(selectedDoc.created_at * 1000), "MMM d, yyyy")}
-                                        </Badge>
+                                        <div className="flex gap-2">
+                                            <Button variant="outline" size="sm" asChild>
+                                                <Link href={`/?q=&doc=${selectedDoc.doc_id}`}>
+                                                    <Search className="w-3 h-3 mr-1" />
+                                                    Search
+                                                </Link>
+                                            </Button>
+                                            <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                onClick={() => handleDelete(selectedDoc.doc_id)}
+                                            >
+                                                <Trash2 className="w-3 h-3 mr-1" />
+                                                Delete
+                                            </Button>
+                                        </div>
                                     </div>
                                 </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="flex gap-4">
-                                        <div className="space-y-1">
-                                            <span className="text-xs font-medium text-gray-500">Doc Type</span>
-                                            <div className="flex items-center gap-1.5 border rounded px-2 py-1 bg-gray-50">
-                                                <Tag className="w-3 h-3 text-gray-400" />
-                                                <span className="text-sm font-medium">{selectedDoc.doc_type || "Unclassified"}</span>
-                                            </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <span className="text-xs font-medium text-gray-500">Risk Level</span>
-                                            <div className="flex items-center gap-1.5 border rounded px-2 py-1 bg-gray-50">
-                                                <AlertTriangle className={`w-3 h-3 ${selectedDoc.risk_level === 'High' ? 'text-red-500' : 'text-gray-400'}`} />
-                                                <span className="text-sm font-medium">{selectedDoc.risk_level || "Unknown"}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </CardContent>
                             </Card>
 
-                            {/* Actions */}
-                            <div className="flex gap-2">
-                                <Button asChild variant="outline">
-                                    <Link href={`/viewer/${selectedDoc.doc_id}?workspace_id=${workspace.id}`}>
-                                        <Eye className="h-4 w-4 mr-2" />
-                                        View Full Document
-                                    </Link>
-                                </Button>
-                                <Button variant="destructive" onClick={() => handleDelete(selectedDoc.doc_id)}>
-                                    <Trash2 className="h-4 w-4 mr-2" />
-                                    Delete
-                                </Button>
-                            </div>
-
-                            {/* Summary / Analysis */}
+                            {/* Document Content Preview */}
                             <Card>
-                                <CardHeader>
-                                    <CardTitle className="text-base flex items-center gap-2">
-                                        <ShieldCheck className="w-4 h-4 text-green-600" />
-                                        AI Summary & Analysis
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="text-sm font-medium text-gray-600">
+                                        Document Preview
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent>
-                                    <div className="prose prose-sm max-w-none text-gray-600">
-                                        {selectedDoc.summary_text ? (
-                                            <p className="whitespace-pre-wrap">{selectedDoc.summary_text}</p>
-                                        ) : (
-                                            <p className="italic text-gray-400">No summary available.</p>
-                                        )}
-                                    </div>
+                                    {loadingContent ? (
+                                        <div className="flex justify-center py-8">
+                                            <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                                        </div>
+                                    ) : (
+                                        <div className="prose prose-sm max-w-none">
+                                            <pre className="whitespace-pre-wrap text-xs text-gray-700 bg-gray-50 p-4 rounded-lg max-h-[500px] overflow-y-auto font-mono">
+                                                {docContent || "No content available."}
+                                            </pre>
+                                        </div>
+                                    )}
                                 </CardContent>
                             </Card>
-
-                            {/* Location */}
-                            <div className="text-xs text-gray-400 font-mono">
-                                Path: {selectedDoc.folder_path || "/"}{selectedDoc.title}
-                            </div>
-
                         </div>
                     ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-4 opacity-50">
-                            <FileText className="w-16 h-16 stroke-[1.5]" />
-                            <p>Select a document from the Data Room to view analysis.</p>
+                        <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-4">
+                            <FileText className="w-16 h-16 stroke-1 opacity-50" />
+                            <p className="text-sm">Select a document to preview</p>
                         </div>
                     )}
                 </div>

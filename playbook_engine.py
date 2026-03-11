@@ -538,15 +538,15 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
             ), None
         
         # Found clause - process it
-        snippet = result.get("snippet", "")[:500]
-        extracted_value = result.get("extracted_value", "")
-        page_number = result.get("page_number", 1)
+        snippet = (result.get("snippet") or "")[:500]
+        extracted_value = result.get("extracted_value") or ""
+        page_number = int(result.get("page_number") or 1)
         
         # Calculate confidence
-        confidence = calculate_confidence(snippet, clause_type, extracted_value)
+        confidence = calculate_confidence(clause_type, extracted_value + " " + snippet, bool(snippet))
         
         # Check for cross-contamination
-        contamination = detect_cross_contamination(snippet, clause_type)
+        contamination = detect_cross_contamination(clause_type, extracted_value + " " + snippet)
         if contamination:
             # Contamination -> UNRESOLVED -> Generate Candidates
             candidates = self._generate_candidates(content, clause_type)
@@ -567,7 +567,7 @@ IMPORTANT: Include an entry for EVERY clause type listed, even if not found (set
             ), None
         
         # Build evidence
-        char_start = result.get("char_start", 0)
+        char_start = result.get("char_start") if result.get("char_start") is not None else 0
         char_end = char_start + len(snippet)
         evidence_list = []
         if snippet:

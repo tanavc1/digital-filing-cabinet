@@ -1,208 +1,300 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useState, useRef, useEffect } from "react";
+import { Search, FileText, Loader2, ChevronDown, ChevronUp, ExternalLink, AlertCircle, Sparkles, Lock, FolderOpen, X, Trash2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import {
-  Loader2,
-  ArrowRight,
-  CheckCircle2,
-  AlertTriangle,
-  FileText,
-  BarChart3,
-  Calendar,
-  Clock,
-  Users,
-  Shield
-} from "lucide-react";
 import { useWorkspace } from "@/components/providers/workspace-provider";
 import api from "@/lib/api";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 
-export default function ProjectHome() {
-  const { workspace } = useWorkspace();
-  const router = useRouter();
-  const [stats, setStats] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+interface Evidence {
+  doc_id: string;
+  quote: string;
+  start_char: number;
+  end_char: number;
+  confidence: number;
+  chunk_id?: string;
+}
+
+interface SearchResult {
+  answer: string;
+  abstained: boolean;
+  sources: Evidence[];
+  explanation?: string;
+}
+
+export default function SearchHome() {
+  const { workspace, docs, docsLoaded } = useWorkspace();
+  const [query, setQuery] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [result, setResult] = useState<SearchResult | null>(null);
+  const [expandedEvidence, setExpandedEvidence] = useState<number | null>(null);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        // Fetch stats from new endpoints
-        // Assuming api.getProjectStats exists or we call fetch direct
-        // Since I haven't added getProjectStats to frontend/lib/api.ts yet, I'll use fetch for demo speed
-        // Or I should assume api.ts update is next.
-        // I'll update api.ts next. For now, use fetch.
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/project/stats?workspace_id=${workspace.id}`);
-        const data = await res.json();
-        setStats(data);
-      } catch (e) {
-        console.error("Failed to load stats", e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStats();
-  }, [workspace.id]);
+    // Load recent searches from localStorage
+    const saved = localStorage.getItem("recentSearches");
+    if (saved) {
+      setRecentSearches(JSON.parse(saved).slice(0, 5));
+    }
+  }, []);
 
-  if (loading) {
-    return (
-      <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-      </div>
-    );
-  }
+  const handleSearch = async (searchQuery?: string) => {
+    const q = searchQuery || query;
+    if (!q.trim()) return;
 
-  if (!stats) return null;
+    setIsSearching(true);
+    setResult(null);
+
+    try {
+      const res = await api.post("/query", {
+        q: q.trim(),
+        workspace_id: workspace.id,
+      });
+      setResult(res.data);
+
+      // Save to recent searches
+      const updated = [q, ...recentSearches.filter(s => s !== q)].slice(0, 5);
+      setRecentSearches(updated);
+      localStorage.setItem("recentSearches", JSON.stringify(updated));
+    } catch (err) {
+      console.error("Search failed:", err);
+      setResult({
+        answer: "An error occurred while searching. Please try again.",
+        abstained: true,
+        sources: [],
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSearch();
+    }
+  };
+
+  const handleDeleteSearch = (term: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = recentSearches.filter(s => s !== term);
+    setRecentSearches(updated);
+    localStorage.setItem("recentSearches", JSON.stringify(updated));
+  };
+
+  const handleClearSearches = () => {
+    setRecentSearches([]);
+    localStorage.removeItem("recentSearches");
+  };
+
+  const getDocTitle = (docId: string) => {
+    const doc = docs?.find(d => d.doc_id === docId);
+    return doc?.title || docId;
+  };
 
   return (
-    <div className="p-8 space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex justify-between items-start">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <h1 className="text-3xl font-bold tracking-tight">Project Home</h1>
-            <Badge variant="outline" className="text-indigo-600 border-indigo-200 bg-indigo-50">
-              Assignment: Acquisition Diligence
-            </Badge>
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+      {/* Hero Section */}
+      <div className="max-w-4xl mx-auto pt-16 px-6">
+        {/* Logo/Brand */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <FileText className="w-6 h-6 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+              Document Search
+            </h1>
           </div>
-          <p className="text-muted-foreground flex items-center gap-2">
-            <Calendar className="w-4 h-4" />
-            Deadline: <span className="font-semibold text-red-600">3 Days Remaining</span>
-            <span className="text-gray-300 mx-2">|</span>
-            <Users className="w-4 h-4" />
-            Team: 3 Reviewers Active
+          <p className="text-gray-500 text-lg">
+            Ask questions across your documents. Every answer backed by evidence.
           </p>
-        </div>
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={() => router.push("/exports")}>
-            <FileText className="w-4 h-4 mr-2" />
-            View Deliverables
-          </Button>
-          <Button onClick={() => router.push("/review-queue")}>
-            Continue Review
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Pipeline Progress */}
-      <div className="space-y-2">
-        <div className="flex justify-between text-sm font-medium text-gray-600 mb-1">
-          <span>Intake (Done)</span>
-          <span>Review ({Math.round(stats.completion_percentage)}%)</span>
-          <span>QA ({stats.qa_approved} Docs)</span>
-          <span>Delivery</span>
-        </div>
-        <Progress value={stats.completion_percentage} className="h-3" />
-      </div>
-
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Docs Remaining</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.unreviewed}</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.in_review} currently in progress
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Review Velocity</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.throughput_docs_per_hr}</div>
-            <p className="text-xs text-muted-foreground">
-              Docs per hour (Team avg)
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">QA Status</CardTitle>
-            <Shield className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.qa_approved}</div>
-            <p className="text-xs text-muted-foreground pt-1">
-              <span className="text-yellow-600 font-medium">{stats.qa_needed} Pending QA</span>
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Risks Flagged</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-red-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.flagged}</div>
-            <p className="text-xs text-muted-foreground">
-              Requires Senior Review
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions / Activity */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="md:col-span-2 space-y-6">
-          <Card className="h-full">
-            <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Live stream of review actions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {/* Mock activity feed */}
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex items-start gap-4 pb-4 border-b last:border-0 last:pb-0">
-                    <div className="h-9 w-9 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-bold text-xs">
-                      JD
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium">John Doe finished review of <span className="text-indigo-600">MSA_Acme_v2.pdf</span></p>
-                      <p className="text-xs text-gray-500">2 minutes ago • 12 clauses extracted</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-center gap-2 mt-3 text-sm text-gray-400">
+            <Lock className="w-3.5 h-3.5" />
+            <span>100% private • Local AI processing • No cloud</span>
+          </div>
         </div>
 
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Delivery Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-between items-center text-sm">
-                <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Clause Matrix</span>
-                <Badge variant="secondary">Ready</Badge>
+        {/* Search Box */}
+        <div className="relative mb-8">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask anything about your documents..."
+              className="w-full pl-12 pr-32 py-4 text-lg border-2 border-gray-200 rounded-2xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none transition-all shadow-sm hover:shadow-md"
+              disabled={isSearching}
+            />
+            <Button
+              onClick={() => handleSearch()}
+              disabled={isSearching || !query.trim()}
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-6 py-2 rounded-xl"
+            >
+              {isSearching ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Search
+                </>
+              )}
+            </Button>
+          </div>
+
+          {/* Document count indicator - only show after docs loaded */}
+          {docsLoaded && (
+            <div className="flex items-center justify-center gap-2 mt-3 text-sm text-gray-500">
+              <FolderOpen className="w-4 h-4" />
+              <span>Searching across {docs.length} document{docs.length !== 1 ? 's' : ''} in {workspace.label}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Recent Searches */}
+        {!result && recentSearches.length > 0 && (
+          <div className="mb-8 relative group">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm text-gray-500">Recent searches:</p>
+              <button
+                onClick={handleClearSearches}
+                className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Trash2 className="w-3 h-3" /> Clear all
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {recentSearches.map((s, i) => (
+                <div
+                  key={i}
+                  className="group/item relative inline-flex"
+                >
+                  <button
+                    onClick={() => {
+                      setQuery(s);
+                      handleSearch(s);
+                    }}
+                    className="pl-3 pr-8 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-600 transition-colors"
+                  >
+                    {s}
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteSearch(s, e)}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-gray-300/50 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Results */}
+        {result && (
+          <div className="space-y-6 pb-16">
+            {/* Answer Card */}
+            <Card className={`border-2 ${result.abstained ? 'border-amber-200 bg-amber-50/50' : 'border-green-200 bg-green-50/50'}`}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  {result.abstained ? (
+                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                  ) : (
+                    <Sparkles className="w-5 h-5 text-green-500" />
+                  )}
+                  <CardTitle className="text-lg">
+                    {result.abstained ? "Insufficient Evidence" : "Answer"}
+                  </CardTitle>
+                  {!result.abstained && (
+                    <Badge variant="secondary" className="ml-auto bg-green-100 text-green-700">
+                      {result.sources.length} source{result.sources.length !== 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">
+                  {result.answer}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Evidence Cards */}
+            {result.sources.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Evidence Citations
+                </h3>
+                <div className="space-y-3">
+                  {result.sources.map((source, index) => (
+                    <Card
+                      key={index}
+                      className="border border-gray-200 hover:border-indigo-300 transition-colors cursor-pointer"
+                      onClick={() => setExpandedEvidence(expandedEvidence === index ? null : index)}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <FileText className="w-4 h-4 text-indigo-500" />
+                              <span className="font-medium text-gray-900">
+                                {getDocTitle(source.doc_id)}
+                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                {Math.round(source.confidence * 100)}% match
+                              </Badge>
+                            </div>
+                            <p className={`text-gray-600 text-sm ${expandedEvidence === index ? '' : 'line-clamp-2'}`}>
+                              "{source.quote}"
+                            </p>
+                          </div>
+                          <Button variant="ghost" size="sm" className="shrink-0">
+                            {expandedEvidence === index ? (
+                              <ChevronUp className="w-4 h-4" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </div>
+                        {expandedEvidence === index && (
+                          <div className="mt-3 pt-3 border-t flex items-center gap-2">
+                            <Button variant="outline" size="sm" asChild>
+                              <a href={`/viewer/${source.doc_id}?workspace_id=${workspace.id}&quote=${encodeURIComponent(source.quote)}`}>
+                                <ExternalLink className="w-3 h-3 mr-1" />
+                                View in Document
+                              </a>
+                            </Button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
               </div>
-              <div className="flex justify-between items-center text-sm">
-                <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Issues List</span>
-                <Badge variant="secondary">Ready</Badge>
-              </div>
-              <div className="flex justify-between items-center text-sm">
-                <span className="flex items-center gap-2 text-gray-400"><Loader2 className="w-4 h-4" /> Evidence Pack</span>
-                <Badge variant="outline">Processing</Badge>
-              </div>
-              <Button className="w-full mt-4" variant="secondary" onClick={() => router.push("/exports")}>
-                Go to Exports
+            )}
+
+            {/* Try Another Search */}
+            <div className="text-center pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setResult(null);
+                  setQuery("");
+                  inputRef.current?.focus();
+                }}
+              >
+                Ask Another Question
               </Button>
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -13,11 +13,26 @@ import pytest
 import asyncio
 import os
 import sys
+import shutil
+import tempfile
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from main import RAGEngine, EvidenceContract
+# Set test environment variables
+os.environ.setdefault("OFFLINE_MODE", "true")
+os.environ.setdefault("LLM_PROVIDER", "ollama")
+os.environ.setdefault("OLLAMA_MODEL", "phi4-mini")
+
+from core import RAGEngine, Config, EvidenceContract
+
+
+def write_temp_file(content: str, suffix: str = ".txt") -> str:
+    """Write content to a temporary file and return the path."""
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, 'w') as f:
+        f.write(content)
+    return path
 
 
 class TestHallucinationPrevention:
@@ -26,9 +41,16 @@ class TestHallucinationPrevention:
     @pytest.fixture
     def engine(self):
         """Create a test engine instance."""
-        # Use a temporary database for tests
-        engine = RAGEngine(db_path="./test_lancedb_hallucination")
-        return engine
+        db_path = "./test_lancedb_hallucination"
+        # Clean up previous test run
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
+        cfg = Config.from_env(db_path=db_path)
+        engine = RAGEngine(cfg)
+        yield engine
+        # Cleanup after test
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
     
     @pytest.mark.asyncio
     async def test_abstains_when_no_relevant_docs(self, engine):
@@ -71,26 +93,29 @@ class TestHallucinationPrevention:
         Either party may terminate this agreement with 30 days written notice.
         """
         
-        # Ingest the test document
-        await engine.ingest_text_file(
-            content=test_content,
-            doc_id="test_employment_doc",
-            title="Test Employment Agreement",
-            workspace_id="test_workspace"
-        )
-        
-        # Query for information that IS in the doc
-        question = "What is the base salary in the employment agreement?"
-        result = await engine.query(question, workspace_id="test_workspace")
-        
-        # Verify sources exist and quotes are from the actual document
-        sources = result.get("sources", [])
-        for source in sources:
-            quote = source.get("quote", "") or source.get("excerpt", "")
-            if quote:
-                # The quote should be findable in our test content
-                assert quote.strip() in test_content or test_content.find(quote[:50]) >= 0, \
-                    f"Quote not found in source document: {quote[:100]}"
+        # Write to temp file and ingest
+        temp_path = write_temp_file(test_content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Test Employment Agreement",
+                workspace_id="test_workspace"
+            )
+            
+            # Query for information that IS in the doc
+            question = "What is the base salary in the employment agreement?"
+            result = await engine.query(question, workspace_id="test_workspace")
+            
+            # Verify sources exist and quotes are from the actual document
+            sources = result.get("sources", [])
+            for source in sources:
+                quote = source.get("quote", "") or source.get("excerpt", "")
+                if quote:
+                    # The quote should be findable in our test content
+                    assert quote.strip() in test_content or test_content.find(quote[:50]) >= 0, \
+                        f"Quote not found in source document: {quote[:100]}"
+        finally:
+            os.unlink(temp_path)
     
     @pytest.mark.asyncio
     async def test_does_not_answer_unrelated_questions(self, engine):
@@ -106,25 +131,28 @@ class TestHallucinationPrevention:
         The lease term is 12 months.
         """
         
-        await engine.ingest_text_file(
-            content=test_content,
-            doc_id="test_lease_doc",
-            title="Test Lease Agreement",
-            workspace_id="test_workspace_2"
-        )
-        
-        # Ask about something NOT in the document
-        question = "What is the employee's health insurance deductible?"
-        result = await engine.query(question, workspace_id="test_workspace_2")
-        
-        # Should abstain or indicate not found
-        answer = result.get("answer", "").lower()
-        assert result.get("abstained", False) or \
-               "not found" in answer or \
-               "no information" in answer or \
-               "cannot find" in answer or \
-               "not mentioned" in answer, \
-            f"System should indicate info not found. Got: {result.get('answer')}"
+        temp_path = write_temp_file(test_content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Test Lease Agreement",
+                workspace_id="test_workspace_2"
+            )
+            
+            # Ask about something NOT in the document
+            question = "What is the employee's health insurance deductible?"
+            result = await engine.query(question, workspace_id="test_workspace_2")
+            
+            # Should abstain or indicate not found
+            answer = result.get("answer", "").lower()
+            assert result.get("abstained", False) or \
+                   "not found" in answer or \
+                   "no information" in answer or \
+                   "cannot find" in answer or \
+                   "not mentioned" in answer, \
+                f"System should indicate info not found. Got: {result.get('answer')}"
+        finally:
+            os.unlink(temp_path)
     
     @pytest.mark.asyncio
     async def test_evidence_verification_rejects_fake_quotes(self, engine):
@@ -153,8 +181,14 @@ class TestAnswerAccuracy:
     
     @pytest.fixture
     def engine(self):
-        engine = RAGEngine(db_path="./test_lancedb_accuracy")
-        return engine
+        db_path = "./test_lancedb_accuracy"
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
+        cfg = Config.from_env(db_path=db_path)
+        engine = RAGEngine(cfg)
+        yield engine
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
     
     @pytest.mark.asyncio
     async def test_extracts_correct_salary(self, engine):
@@ -171,21 +205,24 @@ class TestAnswerAccuracy:
         of up to 50% of base salary.
         """
         
-        await engine.ingest_text_file(
-            content=content,
-            doc_id="exec_agreement",
-            title="Executive Agreement",
-            workspace_id="test_accuracy"
-        )
-        
-        result = await engine.query(
-            "What is the executive's base salary?",
-            workspace_id="test_accuracy"
-        )
-        
-        answer = result.get("answer", "").lower()
-        assert "250,000" in answer or "250000" in answer or "two hundred fifty thousand" in answer, \
-            f"Should correctly extract salary. Got: {answer}"
+        temp_path = write_temp_file(content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Executive Agreement",
+                workspace_id="test_accuracy"
+            )
+            
+            result = await engine.query(
+                "What is the executive's base salary?",
+                workspace_id="test_accuracy"
+            )
+            
+            answer = result.get("answer", "").lower()
+            assert "250,000" in answer or "250000" in answer or "two hundred fifty thousand" in answer, \
+                f"Should correctly extract salary. Got: {answer}"
+        finally:
+            os.unlink(temp_path)
     
     @pytest.mark.asyncio
     async def test_extracts_correct_dates(self, engine):
@@ -198,21 +235,24 @@ class TestAnswerAccuracy:
         on February 28, 2027, for a total term of three (3) years.
         """
         
-        await engine.ingest_text_file(
-            content=content,
-            doc_id="lease_dates",
-            title="Commercial Lease",
-            workspace_id="test_dates"
-        )
-        
-        result = await engine.query(
-            "When does the lease term expire?",
-            workspace_id="test_dates"
-        )
-        
-        answer = result.get("answer", "").lower()
-        assert "february" in answer and "2027" in answer, \
-            f"Should correctly extract expiration date. Got: {answer}"
+        temp_path = write_temp_file(content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Commercial Lease",
+                workspace_id="test_dates"
+            )
+            
+            result = await engine.query(
+                "When does the lease term expire?",
+                workspace_id="test_dates"
+            )
+            
+            answer = result.get("answer", "").lower()
+            assert "february" in answer and "2027" in answer, \
+                f"Should correctly extract expiration date. Got: {answer}"
+        finally:
+            os.unlink(temp_path)
 
 
 class TestLegalSpecificCases:
@@ -220,8 +260,14 @@ class TestLegalSpecificCases:
     
     @pytest.fixture
     def engine(self):
-        engine = RAGEngine(db_path="./test_lancedb_legal")
-        return engine
+        db_path = "./test_lancedb_legal"
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
+        cfg = Config.from_env(db_path=db_path)
+        engine = RAGEngine(cfg)
+        yield engine
+        if os.path.exists(db_path):
+            shutil.rmtree(db_path)
     
     @pytest.mark.asyncio
     async def test_identifies_change_of_control(self, engine):
@@ -240,22 +286,25 @@ class TestLegalSpecificCases:
         option to terminate this Agreement with 60 days notice.
         """
         
-        await engine.ingest_text_file(
-            content=content,
-            doc_id="apa_coc",
-            title="Asset Purchase Agreement",
-            workspace_id="test_legal"
-        )
-        
-        result = await engine.query(
-            "Is there a change of control clause and what triggers it?",
-            workspace_id="test_legal"
-        )
-        
-        answer = result.get("answer", "").lower()
-        # Should mention key triggers
-        assert "merger" in answer or "50%" in answer or "sale" in answer, \
-            f"Should identify change of control triggers. Got: {answer}"
+        temp_path = write_temp_file(content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Asset Purchase Agreement",
+                workspace_id="test_legal"
+            )
+            
+            result = await engine.query(
+                "Is there a change of control clause and what triggers it?",
+                workspace_id="test_legal"
+            )
+            
+            answer = result.get("answer", "").lower()
+            # Should mention key triggers
+            assert "merger" in answer or "50%" in answer or "sale" in answer, \
+                f"Should identify change of control triggers. Got: {answer}"
+        finally:
+            os.unlink(temp_path)
     
     @pytest.mark.asyncio
     async def test_identifies_termination_provisions(self, engine):
@@ -279,24 +328,27 @@ class TestLegalSpecificCases:
         months of the then-current monthly fee.
         """
         
-        await engine.ingest_text_file(
-            content=content,
-            doc_id="service_term",
-            title="Service Agreement",
-            workspace_id="test_legal_2"
-        )
-        
-        result = await engine.query(
-            "What are the termination provisions and any associated fees?",
-            workspace_id="test_legal_2"
-        )
-        
-        answer = result.get("answer", "").lower()
-        # Should mention key details
-        assert "90 days" in answer or "ninety" in answer, \
-            f"Should identify notice period. Got: {answer}"
-        assert "three months" in answer or "termination fee" in answer, \
-            f"Should identify termination fee. Got: {answer}"
+        temp_path = write_temp_file(content)
+        try:
+            await engine.ingest_text_file(
+                path=temp_path,
+                title="Service Agreement",
+                workspace_id="test_legal_2"
+            )
+            
+            result = await engine.query(
+                "What are the termination provisions and any associated fees?",
+                workspace_id="test_legal_2"
+            )
+            
+            answer = result.get("answer", "").lower()
+            # Should mention key details
+            assert "90 days" in answer or "ninety" in answer, \
+                f"Should identify notice period. Got: {answer}"
+            assert "three months" in answer or "termination fee" in answer, \
+                f"Should identify termination fee. Got: {answer}"
+        finally:
+            os.unlink(temp_path)
 
 
 def run_tests():

@@ -23,13 +23,8 @@ export function Sidebar() {
     };
 
     const navItems = [
-        { href: "/", label: "Project Home", icon: Home },
-        { href: "/documents", label: "Data Room", icon: FolderOpen, count: docs?.length },
-        { href: "/clause-matrix", label: "Auto-Pass", icon: Wand2 },
-        { href: "/review-queue", label: "Review Queue", icon: ClipboardCheck },
-        { href: "/qa", label: "QA Mode", icon: ShieldCheck },
-        { href: "/issues", label: "Issues List", icon: AlertOctagon },
-        { href: "/exports", label: "Delivery Exports", icon: PackageCheck },
+        { href: "/", label: "Search", icon: Search },
+        { href: "/documents", label: "Document Library", icon: FolderOpen, count: docs?.length },
         { href: "/settings", label: "Settings", icon: Settings },
     ];
 

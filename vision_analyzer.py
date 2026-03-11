@@ -29,7 +29,7 @@ MIN_IMAGE_SIZE_BYTES = 10 * 1024  # 10KB minimum
 MIN_IMAGE_DIMENSION = 100  # 100px minimum width/height
 
 # Provider configuration
-VISION_PROVIDER = os.getenv("VISION_PROVIDER", "gemini")  # "gemini" or "ollama"
+VISION_PROVIDER = os.getenv("VISION_PROVIDER", "ollama")  # "ollama" (local, default) or "gemini"
 GEMINI_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.0-flash")
 OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "qwen3-vl:8b")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -255,8 +255,8 @@ def analyze_image(
     Analyze an image using the configured vision provider.
     
     Provider is determined by VISION_PROVIDER env var:
-    - "gemini" (default): Google Gemini Flash (cloud)
-    - "ollama": LLaVA via Ollama (local)
+    - "ollama" (default): Qwen3-VL via Ollama (local, private)
+    - "gemini": Google Gemini Flash (cloud, requires API key)
     
     Args:
         image_bytes: Raw image bytes (PNG, JPG, etc.)
@@ -272,16 +272,27 @@ def analyze_image(
     # Route to appropriate provider
     provider = VISION_PROVIDER.lower().strip()
     
-    if provider == "ollama":
-        # Use local LLaVA model
-        if _check_ollama_vision_available():
-            return _analyze_image_ollama(image_bytes, analysis_prompt)
-        else:
-            logger.warning("Ollama vision not available, falling back to Gemini")
-            provider = "gemini"
+    if provider == "gemini":
+        # Explicit cloud request
+        return _analyze_image_gemini(image_bytes, analysis_prompt)
     
-    # Default: Gemini (cloud)
-    return _analyze_image_gemini(image_bytes, analysis_prompt)
+    # Default: local Ollama
+    if _check_ollama_vision_available():
+        return _analyze_image_ollama(image_bytes, analysis_prompt)
+    
+    # Fallback: try Gemini if API key is available
+    if os.getenv("GEMINI_API_KEY"):
+        logger.warning("Ollama vision not available, falling back to Gemini")
+        return _analyze_image_gemini(image_bytes, analysis_prompt)
+    
+    # No vision provider available
+    logger.warning("No vision provider available (Ollama not running, no GEMINI_API_KEY)")
+    return VisionResult(
+        description="[Vision analysis unavailable: Install Ollama and run 'ollama pull qwen3-vl:8b' for local image analysis]",
+        image_type="error",
+        confidence=0.0,
+        provider="none"
+    )
 
 
 def analyze_chart(image_bytes: bytes) -> VisionResult:

@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 import fs from 'fs';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) throw new Error('ADMIN_PASSWORD env var must be set to run tests');
 
 test.describe('Digital Filing Cabinet Core Flow', () => {
 

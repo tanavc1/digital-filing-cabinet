@@ -1,5 +1,8 @@
-# Environment
+# Environment & Secrets
 .env
+.env.*
+*.env.local
+frontend/.env.local
 .venv/
 venv/
 __pycache__/
@@ -8,11 +11,18 @@ __pycache__/
 # DB & Data
 lancedb_data/
 accuracy_benchmark_data/
-backend.log
-backend_debug.log
-upload_error.log
+data/uploads/
+test_lancedb_*/
+
+# Logs
+*.log
+
+# Artifacts & temp
+*.zip
+!Demo_Case_Folder.zip
 *.txt
 !requirements.txt
+benchmark_results.json
 
 # Node
 frontend/node_modules/

@@ -32,7 +32,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from main import Config, RAGEngine, DEFAULT_WORKSPACE_ID
+from core import Config, RAGEngine, DEFAULT_WORKSPACE_ID
+from core.engine import EvidenceContract
 from docling_loader import DoclingExtractor
 from schedule_generator import ScheduleGenerator, ScheduleItem, DisclosureSchedule
 from llm_providers import is_offline_mode, check_ollama_available
@@ -101,7 +102,7 @@ async def startup_validation():
     required_vars = []
     
     # Only require OpenAI Key if using OpenAI
-    if os.getenv("LLM_PROVIDER", "openai") == "openai":
+    if os.getenv("LLM_PROVIDER", "ollama") == "openai":
          required_vars.append("OPENAI_API_KEY")
 
     missing = [k for k in required_vars if not os.getenv(k)]
@@ -383,8 +384,6 @@ async def ingest_file(
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text.")
-
             raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text.")
         
         # PERSISTENCE CHANGE: Save to ./data/uploads instead of temp
@@ -1367,10 +1366,53 @@ async def get_mode_status():
     
     return ModeStatus(
         offline_mode=is_offline_mode(),
-        llm_provider=os.getenv("LLM_PROVIDER", "openai"),
+        llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
         ollama_available=ollama_available,
         ollama_host=os.getenv("OLLAMA_HOST", "http://localhost:11434")
     )
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    import os
+    return {"status": "ok", "provider": os.getenv("LLM_PROVIDER", "unknown")}
+
+@app.get("/project/stats")
+async def get_project_stats(workspace_id: str = DEFAULT_WORKSPACE_ID):
+    """Aggregate project statistics for dashboard."""
+    # Count totals
+    engine = get_engine()
+    docs = engine.store.list_documents(workspace_id)
+    total_docs = len(docs)
+    
+    # Calculate statuses
+    unreviewed = 0
+    in_review = 0
+    completed = 0
+    
+    for d in docs:
+        doc_id = d["doc_id"]
+        if doc_id in _reviews:
+            r = _reviews[doc_id]
+            if r.status == "completed":
+                completed += 1
+            else:
+                in_review += 1
+        else:
+            unreviewed += 1
+            
+    # Stats object
+    completion_percentage = (completed / total_docs * 100) if total_docs > 0 else 0
+    
+    return {
+        "completion_percentage": completion_percentage,
+        "qa_approved": completed, 
+        "qa_needed": in_review,
+        "unreviewed": unreviewed,
+        "in_review": in_review,
+        "throughput_docs_per_hr": 12, 
+        "flagged": len(_issues)
+    }
 
 @app.post("/settings/mode")
 async def set_mode(offline: bool = True):

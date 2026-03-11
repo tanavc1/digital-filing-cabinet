@@ -24,7 +24,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
 
         setIsProcessing(true);
         setUploadStatus({ isUploading: true, fileName: file.name });
-        toast.info(`Uploading Data Room: ${file.name}...`);
+        toast.info(`Uploading folder: ${file.name}...`);
 
         try {
             const result: ZipIngestResult = await ingestZip(file, workspace.id, {
@@ -33,7 +33,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
 
             if (result.ingested > 0) {
                 toast.success(
-                    `Data Room uploaded! ${result.ingested} files ingested` +
+                    `Folder uploaded! ${result.ingested} files ingested` +
                     (result.skipped > 0 ? `, ${result.skipped} skipped` : "") +
                     (result.errors.length > 0 ? `, ${result.errors.length} errors` : "")
                 );
@@ -46,7 +46,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
             onUploadComplete();
         } catch (err: any) {
             console.error("ZIP upload failed:", err);
-            toast.error(err?.response?.data?.detail || "Failed to upload Data Room");
+            toast.error(err?.response?.data?.detail || "Failed to upload folder");
         } finally {
             setIsProcessing(false);
             setUploadStatus({ isUploading: false });
@@ -74,7 +74,7 @@ export function ZipUploadButton({ onUploadComplete }: { onUploadComplete: () => 
                 ) : (
                     <FolderArchive className="w-4 h-4" />
                 )}
-                {isProcessing ? "Processing..." : "Upload Data Room"}
+                {isProcessing ? "Processing..." : "Upload Folder"}
             </Button>
         </div>
     );
